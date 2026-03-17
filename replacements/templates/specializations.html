@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% load custom_tags %}
+
+{% block title %}Редактор специализаций · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Редактор специализаций</h1>
+      <p class="page-subtitle">Отметьте предметы (уроки), которые может вести учитель. Можно добавлять/удалять учителей.</p>
+    </div>
+    <div class="row">
+      <a class="btn btn--secondary" href="/replacements/specializations/">👩‍🏫 Учителя</a>
+      <a class="btn btn--primary" href="/replacements/specializations/editor/">⚙️ Редактор</a>
+      <button id="addTeacherBtn" class="btn btn--ghost" type="button">➕ Добавить учителя</button>
+    </div>
+  </div>
+<style>
+.table-container {
+    overflow: auto;
+    max-height: 80vh;
+    border: 1px solid #ccc;
+    background: white;
+}
+
+.specialization-table {
+    border-collapse: collapse;
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+}
+
+th, td {
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    text-align: center;
+    vertical-align: middle;
+    white-space: normal;
+    word-break: break-word;
+}
+
+th {
+    background: #f8fafc;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.sticky-column {
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 3;
+    min-width: 200px;
+}
+
+.specialization-checkbox {
+    transform: scale(1.5);
+    cursor: pointer;
+    margin: 0 auto;
+    display: block;
+}
+
+::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+.highlight-row td {
+    background-color: #e3f2fd !important;
+}
+
+.highlight-column {
+    background-color: #e3f2fd !important;
+}
+
+.delete-teacher-btn {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.75;
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+.delete-teacher-btn:hover {
+    opacity: 1;
+    background: rgba(0,0,0,0.06);
+}
+
+/* modal styles are in app.css */
+
+</style>
+
+
+<!-- Add teacher modal -->
+<div id="addTeacherModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Добавить учителя">
+  <div class="modal-card">
+    <div class="modal-title">Добавить учителя</div>
+    <input id="teacherFullNameInput" class="field" placeholder="Фамилия Имя Отчество" />
+    <div class="modal-actions">
+      <button id="cancelAddTeacherBtn" class="btn btn--secondary" type="button">Отмена</button>
+      <button id="confirmAddTeacherBtn" class="btn btn--primary" type="button">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__body table-container">
+    <table class="specialization-table">
+        <thead>
+            <tr>
+                <th class="sticky-column">Учитель</th>
+                {% for subject in subjects %}
+                    <th>{{ subject.name }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for teacher in teachers %}
+                <tr data-teacher-id="{{ teacher.id }}">
+                    <td class="sticky-column">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                            <span>{{ teacher.full_name }}</span>
+                            <button type="button" class="btn btn--ghost btn--sm delete-teacher-btn" title="Удалить учителя" data-teacher-id="{{ teacher.id }}">🗑</button>
+                        </div>
+                    </td>
+                    {% for subject in subjects %}
+                        <td class="text-center">
+                            <input type="checkbox"
+                                   class="specialization-checkbox"
+                                   data-teacher-id="{{ teacher.id }}"
+                                   data-subject-id="{{ subject.id_subject }}"
+                                   {% if subject.id_subject|stringformat:"s" in specializations|get_item:teacher.id %}checked{% endif %}>
+                        </td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+    const CSRF_TOKEN = '{{ csrf_token }}';
+
+    // --- Add teacher modal ---
+    const addBtn = document.getElementById('addTeacherBtn');
+    const modal = document.getElementById('addTeacherModal');
+    const inp = document.getElementById('teacherFullNameInput');
+    const cancelBtn = document.getElementById('cancelAddTeacherBtn');
+    const confirmBtn = document.getElementById('confirmAddTeacherBtn');
+
+    function openModal() {
+        modal.style.display = 'flex';
+        inp.value = '';
+        setTimeout(() => inp.focus(), 50);
+    }
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+    addBtn.addEventListener('click', openModal);
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeModal();
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+        const fullName = (inp.value || '').trim();
+        if (!fullName) {
+            AppUI.toast('Введите ФИО', 'warning');
+            return;
+        }
+        if (!confirm(`Точно добавить учителя: "${fullName}"?`)) return;
+
+        try {
+            const resp = await fetch('/replacements/api/teachers/add/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': CSRF_TOKEN
+                },
+                body: JSON.stringify({ full_name: fullName })
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                AppUI.toast(data.error || 'Не удалось добавить учителя', 'danger');
+                return;
+            }
+            closeModal();
+            // Reload to rebuild wide table properly
+            location.reload();
+        } catch (e) {
+            console.error(e);
+            AppUI.toast('Ошибка сети при добавлении учителя', 'danger');
+        }
+    });
+
+    // --- Delete teacher ---
+    document.querySelectorAll('.delete-teacher-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const teacherId = btn.dataset.teacherId;
+            const row = btn.closest('tr');
+            const teacherName = row?.querySelector('td.sticky-column span')?.innerText?.trim() || '';
+
+            if (!confirm(`Точно удалить учителя${teacherName ? ' "' + teacherName + '"' : ''}?`)) return;
+
+            try {
+                const resp = await fetch(`/replacements/api/teachers/${teacherId}/delete/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': CSRF_TOKEN }
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    AppUI.toast(data.error || 'Не удалось удалить учителя', 'danger');
+                    return;
+                }
+                if (row) row.remove();
+                AppUI.toast('Учитель удалён', 'success');
+            } catch (e) {
+                console.error(e);
+                AppUI.toast('Ошибка сети при удалении учителя', 'danger');
+            }
+        });
+    });
+
+    document.querySelectorAll('.specialization-checkbox').forEach(checkbox => {
+    // Обработка смены состояния чекбокса (сохранение)
+    checkbox.addEventListener('change', async function () {
+        const teacherId = this.dataset.teacherId;
+        const subjectId = this.dataset.subjectId;
+        const isChecked = this.checked;
+
+        try {
+            const response = await fetch('/replacements/api/update-specialization/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({
+                    teacher_id: teacherId,
+                    subject_id: subjectId,
+                    action: isChecked ? 'add' : 'remove'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Ошибка сохранения');
+            }
+        } catch (error) {
+            console.error('Ошибка:', error);
+            this.checked = !isChecked;
+            AppUI.toast('Не удалось сохранить специализацию', 'danger');
+        }
+    });
+
+    // Подсветка строки и столбца при наведении
+    checkbox.addEventListener('mouseenter', function () {
+        const cell = this.closest('td');
+        const row = cell.closest('tr');
+        const columnIndex = [...cell.parentElement.children].indexOf(cell);
+
+        row.classList.add('highlight-row');
+
+        document.querySelectorAll('.specialization-table tr').forEach(tr => {
+            const colCell = tr.children[columnIndex];
+            if (colCell) colCell.classList.add('highlight-column');
+        });
+    });
+
+    checkbox.addEventListener('mouseleave', function () {
+        const cell = this.closest('td');
+        const row = cell.closest('tr');
+        const columnIndex = [...cell.parentElement.children].indexOf(cell);
+
+        row.classList.remove('highlight-row');
+
+        document.querySelectorAll('.specialization-table tr').forEach(tr => {
+            const colCell = tr.children[columnIndex];
+            if (colCell) colCell.classList.remove('highlight-column');
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,115 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Загрузка расписания · ИС замещений{% endblock %}
+
+{% block content %}
+  <div id="loadingOverlay" class="loading-overlay" aria-hidden="true">
+    <div class="spinner" aria-label="Загрузка"></div>
+    <div class="loading-text">Загружается…</div>
+  </div>
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">📁 Загрузка расписания</h1>
+      <p class="page-subtitle">Загрузите HTML-файл расписания. Во время парсинга отобразится индикатор загрузки.</p>
+    </div>
+  </div>
+
+  <div class="upload-top-row">
+    <div class="card">
+      <div class="card__body">
+        <form id="uploadForm" method="post" enctype="multipart/form-data" class="stack">
+          {% csrf_token %}
+          <div>
+            <label class="field-label">Файл расписания (.html)</label>
+            <input class="field" type="file" name="schedule_file" accept=".html,.htm" required>
+          </div>
+          <div class="row">
+            <button id="uploadBtn" class="btn btn--primary" type="submit">Загрузить</button>
+            <a class="btn btn--secondary" href="/upload/schedule/">Расписание</a>
+            <a class="btn btn--ghost" href="/replacements/">В меню</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__body">
+        <div class="stack">
+          <div>
+            <div class="muted" style="font-weight: 700;">Текущее активное расписание</div>
+            <div style="margin-top: 6px;">Активных уроков: <b>{{ active_count }}</b></div>
+            <div class="muted" style="margin-top: 6px;">Очистка деактивирует только уроки расписания. Звонки, учителя и история замещений не затрагиваются.</div>
+          </div>
+
+          <form method="post" action="/upload/clear/" onsubmit="return confirm('Точно очистить расписание? История замещений и звонки не затронутся, но активные уроки будут скрыты.');">
+            {% csrf_token %}
+            <button class="btn btn--danger" type="submit">🧹 Очистить расписание</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+  <style>
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 9999;
+    }
+    .spinner {
+      width: 54px;
+      height: 54px;
+      border: 6px solid rgba(37, 99, 235, 0.18);
+      border-top-color: rgba(37, 99, 235, 0.95);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    .loading-text {
+      margin-top: 14px;
+      color: rgba(15, 23, 42, 0.8);
+      font-size: 15px;
+      font-weight: 700;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .upload-top-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 980px) {
+      .upload-top-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block extra_js %}
+  <script>
+    (function() {
+      const form = document.getElementById('uploadForm');
+      const overlay = document.getElementById('loadingOverlay');
+      const btn = document.getElementById('uploadBtn');
+      if (!form || !overlay || !btn) return;
+
+      form.addEventListener('submit', function() {
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden', 'false');
+        btn.disabled = true;
+        btn.textContent = 'Загружается…';
+      });
+    })();
+  </script>
+{% endblock %}

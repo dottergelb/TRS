@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Добавление пользователя · ИС замещений{% endblock %}
+{% block body_class %}auth{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+  <div class="auth-shell">
+    <div class="card auth-card" style="width:min(520px, calc(100% - 32px));">
+      <div class="card__body">
+        <div class="stack" style="gap: 6px; margin-bottom: 10px;">
+          <h1 class="card__title" style="font-size: 20px;">➕ Добавление пользователя</h1>
+          <p class="menu-card__desc" style="margin: 0;">Создание нового пользователя для входа в систему.</p>
+        </div>
+        <form method="post" class="stack">
+          {% csrf_token %}
+
+          {% for field in form %}
+            <div>
+              <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.errors %}
+                <div class="muted" style="color: var(--danger); font-weight: 800; margin-top: 6px;">{{ field.errors }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+
+          <div class="row">
+            <button class="btn btn--primary" type="submit">Зарегистрировать</button>
+            <a class="btn btn--ghost" href="/replacements/">В меню</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+  <style>
+    body.auth .container { padding: 0; }
+    body.auth .app-footer { display: none; }
+    form input, form select { width: 100%; }
+  </style>
+{% endblock %}

@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+
+{% block title %}Звонки · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+  <style>
+    #saved-schedule { overflow-x: auto; display: flex; gap: 14px; padding: 14px 0; align-items: stretch; flex-wrap: wrap; }
+    #saved-schedule .schedule-block { width: 320px; }
+    #saved-schedule .schedule-block.schedule-title { width: 100%; }
+    ul#class-list { list-style: none; padding-left: 0; margin: 8px 0 0; }
+    ul#class-list li { margin: 6px 0; display: flex; gap: 10px; align-items: center; }
+    ul#class-list button { padding: 6px 10px; }
+    .time-table input[type="time"] { width: 120px; }
+    .edit-button { width: 100%; }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">🕒 Расписание звонков</h1>
+      <p class="page-subtitle">Задайте интервалы уроков для выбранных классов и смены. Поле «Конец» может рассчитываться автоматически по длительности.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <form id="schedule-form" class="stack">
+        <div class="row">
+          <div>
+            <label class="field-label">Длительность урока (мин.)</label>
+            <input class="field" type="number" id="lesson-duration" value="45" min="1" max="90">
+          </div>
+
+          <div>
+            <label class="field-label">Смена</label>
+            <select class="field" id="shift-select">
+              <option value="1">1 смена</option>
+              <option value="2">2 смена</option>
+            </select>
+          </div>
+
+          <div class="spacer"></div>
+
+          <div>
+            <label class="field-label">Класс</label>
+            <select class="field" id="class-selector">
+              <option disabled selected>-- Класс --</option>
+              {% for i in class_list %}
+                <option value="{{ i }}">{{ i }} класс</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <div class="field-label">Выбранные классы</div>
+          <ul id="class-list"></ul>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table time-table">
+            <thead>
+              <tr>
+                <th style="width: 120px">Урок №</th>
+                <th>Начало</th>
+                <th>Конец</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for i in lesson_numbers %}
+                <tr>
+                  <td>{{ i }}</td>
+                  <td><input class="field" type="time" name="start_{{ i }}"></td>
+                  <td><input class="field" type="time" name="end_{{ i }}"></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="row">
+          <button class="btn btn--primary" type="submit">Сохранить</button>
+          <a class="btn btn--ghost" href="/replacements/">В меню</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="page-header" style="margin-top: 14px;">
+    <div>
+      <h2 class="page-title" style="font-size: 18px;">Текущее сохранённое расписание</h2>
+      <p class="page-subtitle">Нажмите «Редактировать», чтобы перенести значения наверх.</p>
+    </div>
+  </div>
+
+  <div id="saved-schedule">
+    {% if grouped_schedule_primary or grouped_schedule_senior %}
+      {% if grouped_schedule_primary %}
+        <div class="card schedule-block schedule-title">
+          <div class="card__body">
+            <div class="badge">&#1053;&#1072;&#1095;&#1072;&#1083;&#1082;&#1072; (1-4)</div>
+          </div>
+        </div>
+        {% for key, class_group in grouped_schedule_primary %}
+          {% with shift=key.0 lesson_pairs=key.1 %}
+            <div class="card schedule-block">
+              <div class="card__body stack">
+                <div>
+                  <div class="badge">&#1057;&#1084;&#1077;&#1085;&#1072; {{ shift }}</div>
+                  <div style="margin-top: 6px;"><strong>&#1050;&#1083;&#1072;&#1089;&#1089;&#1099;:</strong> {{ class_group|join:", " }}</div>
+                </div>
+
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th style="width: 90px">&#1059;&#1088;&#1086;&#1082; &#8470;</th>
+                        <th>&#1053;&#1072;&#1095;&#1072;&#1083;&#1086;</th>
+                        <th>&#1050;&#1086;&#1085;&#1077;&#1094;</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for item in lesson_pairs %}
+                        <tr>
+                          <td>{{ item.0 }}</td>
+                          <td>{{ item.1.0|time:"H:i" }}</td>
+                          <td>{{ item.1.1|time:"H:i" }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+
+                <button type="button" class="btn btn--secondary edit-button"
+                        data-shift="{{ shift }}"
+                        data-classes="{{ class_group|join:',' }}"
+                        data-lessons='[
+                          {% for item in lesson_pairs %}
+                            {"num": {{ item.0 }}, "start": "{{ item.1.0|time:"H:i" }}", "end": "{{ item.1.1|time:"H:i" }}"}{% if not forloop.last %},{% endif %}
+                          {% endfor %}
+                        ]'>
+                  &#9998;&#65039; &#1056;&#1077;&#1076;&#1072;&#1082;&#1090;&#1080;&#1088;&#1086;&#1074;&#1072;&#1090;&#1100;
+                </button>
+              </div>
+            </div>
+          {% endwith %}
+        {% endfor %}
+      {% endif %}
+
+      {% if grouped_schedule_senior %}
+        <div class="card schedule-block schedule-title">
+          <div class="card__body">
+            <div class="badge">&#1057;&#1090;&#1072;&#1088;&#1096;&#1080;&#1077; (5-11)</div>
+          </div>
+        </div>
+        {% for key, class_group in grouped_schedule_senior %}
+          {% with shift=key.0 lesson_pairs=key.1 %}
+            <div class="card schedule-block">
+              <div class="card__body stack">
+                <div>
+                  <div class="badge">&#1057;&#1084;&#1077;&#1085;&#1072; {{ shift }}</div>
+                  <div style="margin-top: 6px;"><strong>&#1050;&#1083;&#1072;&#1089;&#1089;&#1099;:</strong> {{ class_group|join:", " }}</div>
+                </div>
+
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th style="width: 90px">&#1059;&#1088;&#1086;&#1082; &#8470;</th>
+                        <th>&#1053;&#1072;&#1095;&#1072;&#1083;&#1086;</th>
+                        <th>&#1050;&#1086;&#1085;&#1077;&#1094;</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for item in lesson_pairs %}
+                        <tr>
+                          <td>{{ item.0 }}</td>
+                          <td>{{ item.1.0|time:"H:i" }}</td>
+                          <td>{{ item.1.1|time:"H:i" }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+
+                <button type="button" class="btn btn--secondary edit-button"
+                        data-shift="{{ shift }}"
+                        data-classes="{{ class_group|join:',' }}"
+                        data-lessons='[
+                          {% for item in lesson_pairs %}
+                            {"num": {{ item.0 }}, "start": "{{ item.1.0|time:"H:i" }}", "end": "{{ item.1.1|time:"H:i" }}"}{% if not forloop.last %},{% endif %}
+                          {% endfor %}
+                        ]'>
+                  &#9998;&#65039; &#1056;&#1077;&#1076;&#1072;&#1082;&#1090;&#1080;&#1088;&#1086;&#1074;&#1072;&#1090;&#1100;
+                </button>
+              </div>
+            </div>
+          {% endwith %}
+        {% endfor %}
+      {% endif %}
+    {% else %}
+      <div class="card"><div class="card__body muted">&#1055;&#1086;&#1082;&#1072; &#1085;&#1080;&#1095;&#1077;&#1075;&#1086; &#1085;&#1077; &#1089;&#1086;&#1093;&#1088;&#1072;&#1085;&#1077;&#1085;&#1086;.</div></div>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+  <script>
+    const classSelector = document.getElementById('class-selector');
+    const classList = document.getElementById('class-list');
+    const selectedClasses = new Set();
+
+    function renderSelectedClasses() {
+      classList.innerHTML = '';
+      selectedClasses.forEach((cls) => {
+        const li = document.createElement('li');
+        li.dataset.value = cls;
+        li.innerHTML = `<span><strong>${cls}</strong> класс</span> <button class="btn btn--ghost btn--sm" type="button">❌</button>`;
+        li.querySelector('button').addEventListener('click', () => {
+          selectedClasses.delete(cls);
+          renderSelectedClasses();
+        });
+        classList.appendChild(li);
+      });
+    }
+
+    classSelector.addEventListener('change', function () {
+      const cls = this.value;
+      if (!cls) return;
+      selectedClasses.add(cls);
+      renderSelectedClasses();
+      this.selectedIndex = 0;
+    });
+
+    document.getElementById('schedule-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      const shift = document.getElementById('shift-select').value;
+      const schedule = [];
+
+      selectedClasses.forEach(cls => {
+        {% for i in lesson_numbers %}
+          const start{{ i }} = document.querySelector('[name=start_{{ i }}]').value;
+          const end{{ i }} = document.querySelector('[name=end_{{ i }}]').value;
+          if (start{{ i }} && end{{ i }}) {
+            schedule.push({ class_group: cls, lesson_number: {{ i }}, start_time: start{{ i }}, end_time: end{{ i }} });
+          }
+        {% endfor %}
+      });
+
+      if (schedule.length === 0) {
+        AppUI.toast('Выберите хотя бы один класс и укажите время хотя бы для одного урока.', 'warning');
+        return;
+      }
+
+      fetch('', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({ schedule, shift })
+      }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+          AppUI.toast('Сохранено!', 'success');
+          location.reload();
+        } else {
+          AppUI.toast('Ошибка при сохранении расписания.', 'danger');
+          console.error(data);
+        }
+      }).catch(err => {
+        AppUI.toast('Ошибка сети при сохранении.', 'danger');
+        console.error(err);
+      });
+    });
+
+    // Auto-calc end time by duration
+    document.querySelectorAll('input[type="time"]').forEach(input => {
+      if (input.name.startsWith('start_')) {
+        input.addEventListener('input', function () {
+          const duration = parseInt(document.getElementById('lesson-duration').value);
+          if (!duration || isNaN(duration)) return;
+
+          const startTime = this.value;
+          if (!startTime) return;
+
+          const endName = this.name.replace('start_', 'end_');
+          const endInput = document.querySelector(`[name=${endName}]`);
+          if (!endInput) return;
+
+          const [hours, minutes] = startTime.split(':').map(Number);
+          let endMinutes = hours * 60 + minutes + duration;
+          if (endMinutes >= 1440) endMinutes = 1439;
+          const endHours = Math.floor(endMinutes / 60);
+          const endMins = endMinutes % 60;
+          endInput.value = `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}`;
+        });
+      }
+    });
+
+    // Load saved block into the editor
+    document.querySelectorAll('.edit-button').forEach(button => {
+      button.addEventListener('click', function () {
+        document.getElementById('shift-select').value = this.dataset.shift;
+
+        const selected = (this.dataset.classes || '').split(',').map(s => s.trim()).filter(Boolean);
+        selectedClasses.clear();
+        selected.forEach(cls => selectedClasses.add(cls));
+        renderSelectedClasses();
+
+        const lessons = JSON.parse(this.dataset.lessons || '[]');
+        lessons.forEach(item => {
+          const s = document.querySelector(`[name=start_${item.num}]`);
+          const e = document.querySelector(`[name=end_${item.num}]`);
+          if (s) s.value = item.start;
+          if (e) e.value = item.end;
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+  </script>
+{% endblock %}

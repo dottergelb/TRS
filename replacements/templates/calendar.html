@@ -1,0 +1,2303 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Календарь · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+    <style>
+        .repl-special__title { font-weight: 700; margin-bottom: 8px; }
+        .repl-special__list { display: grid; gap: 8px; }
+        .repl-special__item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 10px; }
+        .repl-special__meta .muted { font-size: 12px; }
+        .repl-lesson__flag { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; font-size: 12px; color: #475569; }
+        .conflict-box { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.3); }
+        .conflict-line { font-size: 12px; line-height: 1.35; color: #7f1d1d; }
+        .conflict-confirm { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.35; color: #7f1d1d; margin-top: 4px; }
+        .conflict-confirm input { margin-top: 2px; }
+    </style>{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Календарь замещений</h1>
+            <p class="page-subtitle">Выберите дату, настройте замены и сохраните. Дни с сохранёнными заменами подсвечены.</p>
+        </div>
+    </div>
+
+    <div class="card repl-toolbar">
+      <div class="card__body repl-toolbar__body">
+        <div class="repl-toolbar__left">
+          <div class="field" style="min-width: 220px;">
+            <label class="label" for="datePicker">Дата</label>
+            <input type="text" id="datePicker" aria-label="Выберите дату" placeholder="Выберите дату">
+          </div>
+
+          <div class="field" style="min-width: 320px;">
+            <label class="label">Учителя (для просмотра расписания)</label>
+            <div id="teacherSelectContainer" class="repl-teacher-pickers"></div>
+          </div>
+        </div>
+
+        <div class="repl-toolbar__actions">
+          <button class="btn btn--secondary" onclick="clearAll()">❌ Очистить все</button>
+          <button class="btn btn--primary" onclick="addAnotherTeacher()">➕ Добавить учителя</button>
+          <button class="btn btn--secondary" onclick="openSpecialReplacementModal()">➕ Добавить урок</button>
+          <button class="btn btn--primary" id="saveButton" onclick="saveReplacements()">💾 Сохранить все</button>
+          <button class="btn btn--ghost" onclick="exportToDoc()">📥 Экспорт в DOCX</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="specialReplacementsCard" class="card repl-special">
+      <div class="card__body">
+        <div class="repl-special__title">Отдельные замещения</div>
+        <div id="specialReplacementsList" class="repl-special__list"></div>
+      </div>
+    </div>
+
+    <div id="teachersContainer" class="repl-teachers"></div>
+{% endblock %}
+
+{% block extra_js %}
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://unpkg.com/docx@7.7.0/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.0/FileSaver.min.js"></script>
+    <script>
+        let state = {
+            selectedDate: null,
+            selectedDay: null,
+            teachers: [],
+            lessons: {},
+            replacements: {},
+            specialReplacements: [],
+            teacherHours: {}, // Добавляем объект для хранения часов учителей
+
+            // Конфликты/подтверждения при выборе занятого учителя
+            conflictConfirm: {},   // {lessonId: true/false}
+            clientConflicts: {},   // конфликты с другими выбранными заменами (внутри страницы)
+            serverConflicts: {}    // конфликты с расписанием/уже сохранёнными заменами (с сервера)
+        };
+
+        // flatpickr instance + dates with replacements for the currently displayed month
+        let datePickerFp = null;
+        let markedDates = new Set(); // YYYY-MM-DD
+        let markedMonthKey = null;   // YYYY-MM
+
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        async function loadMarkedDatesForMonth(year, month0) {
+            try {
+                const month = month0 + 1;
+                const key = `${year}-${pad2(month)}`;
+                if (markedMonthKey === key) return;
+                const res = await fetch(`/replacements/api/replacement-dates/?year=${year}&month=${month}`);
+                const data = await res.json();
+                if (data && Array.isArray(data.dates)) {
+                    markedDates = new Set(data.dates);
+                    markedMonthKey = key;
+                    if (datePickerFp) datePickerFp.redraw();
+                }
+            } catch (e) {
+                console.warn('Не удалось загрузить даты с заменами:', e);
+            }
+        }
+
+        function resetWorkspaceKeepDate() {
+            // Keep selectedDate/selectedDay, but clear UI + data for a fresh workspace
+            const keepDate = state.selectedDate;
+            const keepDay = state.selectedDay;
+            state.teachers = [];
+            state.lessons = {};
+            state.replacements = {};
+            state.specialReplacements = [];
+            state.teacherHours = {};
+            state.conflictConfirm = {};
+            state.clientConflicts = {};
+            state.serverConflicts = {};
+            state.selectedDate = keepDate;
+            state.selectedDay = keepDay;
+            document.getElementById('teachersContainer').innerHTML = '';
+            document.getElementById('teacherSelectContainer').innerHTML = '';
+            renderSpecialReplacements();
+            updateSaveButtonState();
+        }
+
+        async function deleteReplacementsOnServer(dateStr) {
+            const res = await fetch('/replacements/api/delete-replacements/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: dateStr })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data?.error || 'Не удалось удалить замены');
+            }
+            // Update marker set for current month
+            if (markedDates.has(dateStr)) {
+                markedDates.delete(dateStr);
+                if (datePickerFp) datePickerFp.redraw();
+            }
+            return data;
+        }
+
+
+// Date picker: use native input to avoid dependency on external CDNs.
+function revertToPreviousDate(prevDate, prevDay) {
+    if (prevDate) {
+        state.selectedDate = prevDate;
+        state.selectedDay = prevDay;
+        if (datePickerFp) {
+            datePickerFp.setDate(prevDate, false);
+        } else {
+            const dp = document.getElementById('datePicker');
+            if (dp) dp.value = prevDate;
+        }
+    } else {
+        // No previous date: clear selection + workspace
+        clearAll();
+    }
+}
+
+async function onDateSelected(formatted) {
+    if (!formatted) return;
+
+    // Защита от двойных срабатываний (flatpickr может дергать onChange несколько раз при одних и тех же значениях)
+    if (state._dateSelectLock) return;
+    state._dateSelectLock = true;
+
+    const prevDate = state.selectedDate;
+    const prevDay = state.selectedDay;
+    state.selectedDate = formatted;
+
+    // Build JS Date in local time (avoid timezone shifts)
+    const parts = formatted.split('-').map(x => parseInt(x, 10));
+    const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+
+    const dayMap = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    state.selectedDay = dayMap[dt.getDay()].toLowerCase();
+
+    try {
+        // Если на странице есть неподтверждённые предупреждения — не даём "потерять" изменения.
+        updateSaveButtonState();
+        if (document.getElementById('saveButton')?.disabled) {
+            AppUI.toast('Сначала подтвердите все предупреждения (флажки), затем можно переключать дату.', 'warning');
+            return;
+        }
+
+        const checkRes = await fetch(`/replacements/api/check-replacements/?date=${formatted}`);
+        const checkData = await checkRes.json();
+
+        if (checkData.exists) {
+            const result = await Swal.fire({
+                title: "📅 На эту дату уже есть замены",
+                text: "Что сделать с этой датой?",
+                icon: "question",
+                showDenyButton: true,
+                showCancelButton: true,
+                confirmButtonText: "Открыть",
+                denyButtonText: "Очистить",
+                cancelButtonText: "Отмена"
+            });
+
+            if (result.isConfirmed) {
+                await fetchSavedReplacements();
+                await ensureVacancyTeachersForSelectedDate();
+                AppUI.toast('Замещения загружены.', 'success');
+            } else if (result.isDenied) {
+                // Очистить на сервере и показать пустое рабочее место
+                const confirmClear = await Swal.fire({
+                    title: "❌ Очистить замены?",
+                    text: "Все замены на эту дату будут удалены.",
+                    icon: "warning",
+                    showCancelButton: true,
+                    confirmButtonText: "Да, очистить",
+                    cancelButtonText: "Отмена"
+                });
+                if (confirmClear.isConfirmed) {
+                    await deleteReplacementsOnServer(formatted);
+                    resetWorkspaceKeepDate();
+                    await ensureVacancyTeachersForSelectedDate();
+                } else {
+                    // cancelled clearing -> revert date selection
+                    revertToPreviousDate(prevDate, prevDay);
+                }
+            } else {
+                // Cancel -> revert date selection
+                revertToPreviousDate(prevDate, prevDay);
+            }
+        } else {
+            // Пустая дата -> сразу показываем пустое рабочее место
+            resetWorkspaceKeepDate();
+            await ensureVacancyTeachersForSelectedDate();
+        }
+
+    } catch (err) {
+        console.error("Ошибка при проверке замен:", err);
+        Swal.fire("⚠️ Ошибка", "Не удалось проверить замены. Проверьте консоль.", "error");
+    }
+
+    finally {
+        state._dateSelectLock = false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const dp = document.getElementById('datePicker');
+    if (!dp) return;
+    renderSpecialReplacements();
+
+    // Restore удобный календарь (flatpickr). Если CDN недоступен — останется ручной ввод.
+    // Важно: НЕ вешаем дополнительный dp.change, если есть flatpickr — иначе onDateSelected может сработать дважды.
+    if (window.flatpickr) {
+        datePickerFp = window.flatpickr(dp, {
+            dateFormat: "Y-m-d",
+            allowInput: true,
+            disableMobile: true,
+            onDayCreate: function(dObj, dStr, fp, dayElem) {
+                try {
+                    const ymd = fp.formatDate(dayElem.dateObj, 'Y-m-d');
+                    if (markedDates.has(ymd)) {
+                        dayElem.classList.add('has-replacements');
+                    }
+                } catch (e) {}
+            },
+            onReady: async function(selectedDates, dateStr, fp) {
+                await loadMarkedDatesForMonth(fp.currentYear, fp.currentMonth);
+            },
+            onMonthChange: async function(selectedDates, dateStr, fp) {
+                await loadMarkedDatesForMonth(fp.currentYear, fp.currentMonth);
+            },
+            onYearChange: async function(selectedDates, dateStr, fp) {
+                await loadMarkedDatesForMonth(fp.currentYear, fp.currentMonth);
+            },
+            onChange: async (selectedDates, dateStr) => {
+                await onDateSelected(dateStr);
+            }
+        });
+    } else {
+        // Фоллбек: если flatpickr недоступен и пользователь вводит дату вручную
+        dp.addEventListener('change', async () => {
+            await onDateSelected(dp.value);
+        });
+    }
+});
+
+async function fetchSavedReplacements() {
+    try {
+        const response = await fetch(`/replacements/api/replacements/?date=${state.selectedDate}`);
+        if (!response.ok) {
+            const errText = await response.text();
+            AppUI.toast('Ошибка загрузки замещений: ' + errText, 'danger');
+            return;
+        }
+        const data = await response.json();
+
+        state.replacements = {};
+        state.specialReplacements = [];
+        state.teachers = [];
+        state.lessons = {};
+        state.teacherHours = {};
+        state.conflictConfirm = {};
+        state.clientConflicts = {};
+        state.serverConflicts = {};
+
+        const teacherIds = new Set();
+
+        const replList = Array.isArray(data.replacements) ? data.replacements : [];
+        replList.forEach(repl => {
+            state.replacements[repl.lesson_id] = {
+                lessonId: repl.lesson_id,
+                originalTeacherId: repl.original_id,
+                replacementTeacherId: repl.teacher_id,
+                replacementClassroom: repl.classroom || '',
+                productionNecessity: repl.production_necessity === true,
+                ignoreInReports: repl.ignore_in_reports === true,
+                date: state.selectedDate
+            };
+            // Если предупреждения уже были подтверждены при сохранении — не требуем повторного подтверждения.
+            if (repl.confirmed === true) {
+                state.conflictConfirm[repl.lesson_id] = true;
+            }
+            teacherIds.add(repl.original_id);
+        });
+
+        state.specialReplacements = (Array.isArray(data.special_replacements) ? data.special_replacements : []).map(sr => ({
+            id: sr.id,
+            class_group: sr.class_group,
+            subject_name: sr.subject_name,
+            lesson_id: sr.lesson_id,
+            lesson_number: sr.lesson_number,
+            start: sr.start,
+            end: sr.end,
+            classroom: sr.classroom,
+            teacher_id: sr.teacher_id,
+            teacher_name: sr.teacher_name || '',
+            original_teacher_id: sr.original_teacher_id || null,
+            original_teacher_name: sr.original_teacher_name || ''
+        }));
+        renderSpecialReplacements();
+        // Обновляем UI выбора учителей: показываем тех, у кого есть замены в этот день.
+        // Это делает "Открыть" наглядным (пользователь сразу видит, что данные загружены).
+        const teacherPickers = document.getElementById('teacherSelectContainer');
+        if (teacherPickers) teacherPickers.innerHTML = '';
+
+        for (let teacherId of teacherIds) {
+            const teacherResponse = await fetch(`/replacements/api/teachers/${teacherId}/`);
+            const teacherData = await teacherResponse.json();
+            if (teacherData.name) {
+                state.teachers.push({
+                    id: teacherId,
+                    name: teacherData.name,
+                    lessons: []
+                });
+
+                // Добавляем селект в панель "Учителя" и выставляем значение (без лишней логики автодобавления)
+                if (teacherPickers) {
+                    const block = document.createElement('div');
+                    block.className = 'repl-picker';
+                    block.innerHTML = `<select class="js-teacher-select repl-picker__select"><option></option></select>`;
+                    teacherPickers.appendChild(block);
+                    initSelect2(block);
+                    // Проставляем значение напрямую
+                    const $sel = $(block).find('.js-teacher-select');
+                    const opt = new Option(teacherData.name, teacherId, true, true);
+                    $sel.append(opt).trigger('change');
+                }
+
+                // Загружаем количество часов для учителя
+                const hoursResponse = await fetch(`/replacements/api/teacher-hours/${teacherId}/?date=${state.selectedDate}`);
+                const hoursData = await hoursResponse.json();
+                state.teacherHours[teacherId] = {
+    base: hoursData.base_hours || 0,
+    replacements: hoursData.replacement_hours || 0
+};
+
+            }
+
+            const lessonsResponse = await fetch(`/replacements/api/lessons/${teacherId}/${state.selectedDay}/`);
+            const lessonsData = await lessonsResponse.json();
+            state.lessons[teacherId] = lessonsData.lessons.map(lesson => ({
+                id: lesson.id,
+                number: lesson.number,
+                start: lesson.start,
+                end: lesson.end,
+                subject: lesson.subject,
+                class: lesson.class
+            }));
+        }
+
+        renderTeacherSelection();
+        // После отрисовки учителей и уроков подгружаем конфликты по кабинетам для сохранённых замен
+        // Конфликты по кабинетам не обрабатываются на странице замещений учителей
+        // Для наглядности при "Открыть" раскрываем карточки учителей и прокручиваем к рабочей области.
+        setTimeout(() => {
+            try {
+                (state.teachers || []).forEach(t => toggleLessons(t.id, true));
+                document.getElementById('teachersContainer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {}
+        }, 0);
+
+    } catch (error) {
+        console.error('Ошибка загрузки сохранённых замен:', error);
+        AppUI.toast('Ошибка загрузки сохранённых замен.', 'danger');
+        Swal.fire("❌ Ошибка", "Не удалось загрузить сохранённые замены.", "error");
+    }
+}
+
+// Загружается свернуто по умолчанию
+function renderTeacherSelection() {
+    const container = document.getElementById('teachersContainer');
+    container.innerHTML = state.teachers.map(teacher => {
+        const baseH = state.teacherHours[teacher.id]?.base || 0;
+        const replH = state.teacherHours[teacher.id]?.replacements || 0;
+        return `
+          <section class="card repl-teacher" data-teacher-id="${teacher.id}">
+            <div class="card__header repl-teacher__header">
+              <div class="repl-teacher__meta">
+                <div class="repl-teacher__name">${teacher.name}</div>
+                <div class="repl-teacher__hours">Основа: ${baseH} ч/нед. · Замены: ${replH} ч/нед.</div>
+              </div>
+              <div class="repl-teacher__actions">
+                <button type="button" class="icon-btn" data-action="toggle" onclick="toggleLessons(${teacher.id})" aria-label="Показать/скрыть уроки">▾</button>
+                <button type="button" class="icon-btn" data-action="remove" onclick="removeTeacher(${teacher.id})" aria-label="Удалить учителя">🗑</button>
+              </div>
+            </div>
+            <div class="card__body">
+              <div class="lessons-container repl-lessons" style="display: none;"></div>
+            </div>
+          </section>
+        `;
+    }).join('');
+
+    state.teachers.forEach(teacher => {
+        if (state.lessons[teacher.id]) {
+            renderLessons(teacher.id);
+        }
+    });
+}
+
+function escapeHtml(str) {
+    return String(str || "").replace(/[&<>"']/g, s => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[s]));
+}
+
+function renderSpecialReplacements() {
+    const list = document.getElementById('specialReplacementsList');
+    const card = document.getElementById('specialReplacementsCard');
+    if (!list || !card) return;
+    const items = state.specialReplacements || [];
+    if (items.length === 0) {
+        card.style.display = 'none';
+        list.innerHTML = '';
+        return;
+    }
+    card.style.display = '';
+
+    list.innerHTML = items.map((item, idx) => {
+        const time = (item.start && item.end) ? `${item.start}–${item.end}` : '';
+        const lessonNum = item.lesson_number != null ? `Урок ${item.lesson_number}` : '';
+        const room = item.classroom ? `Каб. ${item.classroom}` : '';
+        const meta = [lessonNum, time, room].filter(Boolean).join(' · ');
+        return `
+          <div class="repl-special__item">
+            <div class="repl-special__meta">
+              <div><strong>${escapeHtml(item.class_group)}</strong> · ${escapeHtml(item.subject_name)}</div>
+              <div class="muted">${escapeHtml(meta)}</div>
+              <div class="muted">${escapeHtml(item.original_teacher_name || '—')} → ${escapeHtml(item.teacher_name || '')}</div>
+            </div>
+            <button type="button" class="icon-btn" onclick="removeSpecialReplacement(${idx})" aria-label="Удалить">🗑</button>
+          </div>
+        `;
+    }).join('');
+}
+
+async function openSpecialReplacementModal() {
+    if (!state.selectedDate) {
+        AppUI.toast('Сначала выберите дату в календаре.', 'warning');
+        return;
+    }
+
+    const result = await Swal.fire({
+        title: 'Добавить урок',
+        html: `
+          <div class="stack" style="text-align: left;">
+            <div>
+              <label class="field-label" for="special-class">Класс</label>
+              <input id="special-class" class="field" list="special-class-list" placeholder="Например: 7Б">
+              <datalist id="special-class-list"></datalist>
+            </div>
+            <div>
+              <label class="field-label" for="special-subject">Предмет</label>
+              <input id="special-subject" class="field" list="special-subject-list" placeholder="Например: Классный час">
+              <datalist id="special-subject-list"></datalist>
+            </div>
+            <div>
+              <label class="repl-lesson__flag" style="margin: 0;">
+                <input type="checkbox" id="special-manual">
+                Вне расписания (ручной урок)
+              </label>
+            </div>
+            <div>
+              <label class="field-label" for="special-original-teacher">Кого замещают</label>
+              <select id="special-original-teacher" class="field" style="width: 100%;"></select>
+            </div>
+            <div>
+              <label class="field-label" for="special-teacher">Кто замещает</label>
+              <select id="special-teacher" class="field" style="width: 100%;"></select>
+            </div>
+            <div>
+              <label class="field-label" for="special-lesson">Урок из расписания</label>
+              <select id="special-lesson" class="field" style="width: 100%;" disabled></select>
+            </div>
+            <div id="special-manual-fields" style="display: none;">
+              <div>
+                <label class="field-label" for="special-shift">Смена (по классу)</label>
+                <input id="special-shift" class="field" readonly>
+              </div>
+              <div>
+                <label class="field-label" for="special-lesson-number">Номер урока</label>
+                <input id="special-lesson-number" type="number" min="1" class="field" placeholder="Например: 5">
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div>
+                  <label class="field-label" for="special-start">Начало</label>
+                  <input id="special-start" type="time" class="field">
+                </div>
+                <div>
+                  <label class="field-label" for="special-end">Конец</label>
+                  <input id="special-end" type="time" class="field">
+                </div>
+              </div>
+              <div>
+                <label class="field-label" for="special-room">Кабинет</label>
+                <input id="special-room" class="field" placeholder="Например: 216">
+              </div>
+            </div>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Добавить',
+        cancelButtonText: 'Отмена',
+        focusConfirm: false,
+        didOpen: async () => {
+            const res = await fetch('/replacements/api/special-options/');
+            const data = await res.json();
+            const classes = Array.isArray(data.classes) ? data.classes : [];
+            const subjects = Array.isArray(data.subjects) ? data.subjects : [];
+
+            const classInput = document.getElementById('special-class');
+            const subjectInput = document.getElementById('special-subject');
+            const classList = document.getElementById('special-class-list');
+            const subjectList = document.getElementById('special-subject-list');
+            const lessonSelect = document.getElementById('special-lesson');
+            const teacherSelect = document.getElementById('special-teacher');
+            const originalTeacherSelect = document.getElementById('special-original-teacher');
+            const manualBox = document.getElementById('special-manual');
+            const manualFields = document.getElementById('special-manual-fields');
+            const shiftInput = document.getElementById('special-shift');
+            const lessonNumberInput = document.getElementById('special-lesson-number');
+            const startInput = document.getElementById('special-start');
+            const endInput = document.getElementById('special-end');
+
+            classList.innerHTML = classes.map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+            subjectList.innerHTML = subjects.map(s => `<option value="${escapeHtml(s)}"></option>`).join('');
+            classInput.value = '';
+            subjectInput.value = '';
+
+            $(originalTeacherSelect).select2({
+                placeholder: 'Выберите отсутствующего учителя',
+                dropdownParent: $('.swal2-container'),
+                ajax: {
+                    url: '/replacements/api/teachers/',
+                    dataType: 'json',
+                    delay: 250,
+                    data: params => ({ term: params.term }),
+                    processResults: data => ({ results: data.results || [] })
+                }
+            });
+            $(teacherSelect).select2({
+                placeholder: 'Выберите учителя',
+                dropdownParent: $('.swal2-container'),
+                ajax: {
+                    url: '/replacements/api/teachers/',
+                    dataType: 'json',
+                    delay: 250,
+                    data: params => ({ term: params.term }),
+                    processResults: data => ({ results: data.results || [] })
+                }
+            });
+
+            function toggleManualMode() {
+                const isManual = !!manualBox.checked;
+                manualFields.style.display = isManual ? '' : 'none';
+                lessonSelect.disabled = isManual;
+                if (isManual) {
+                    lessonSelect.innerHTML = '<option value="">Ручной урок</option>';
+                }
+            }
+
+            function inferShiftByClassLocal(classGroup) {
+                const m = String(classGroup || '').match(/(\d{1,2})/);
+                if (!m) return null;
+                const grade = parseInt(m[1], 10);
+                if (!Number.isInteger(grade)) return null;
+                if (grade >= 1 && grade <= 4) return 1;
+                if (grade === 6 || grade === 7 || grade === 8) return 2;
+                if (grade === 5 || grade === 9 || grade === 10 || grade === 11) return 1;
+                return null;
+            }
+
+            async function autoFillManualByClassAndLesson() {
+                if (!manualBox.checked) return;
+                const classGroup = (classInput.value || '').trim();
+                const lessonNum = (lessonNumberInput.value || '').trim();
+                const localShift = inferShiftByClassLocal(classGroup);
+                shiftInput.value = localShift ? `${localShift} смена` : '';
+                if (!classGroup || !lessonNum) {
+                    return;
+                }
+                try {
+                    const url = `/replacements/api/special-time/?class_group=${encodeURIComponent(classGroup)}&lesson_number=${encodeURIComponent(lessonNum)}`;
+                    const resp = await fetch(url);
+                    const data = await resp.json();
+                    let shift = null;
+                    if (data && data.shift !== null && data.shift !== undefined) {
+                        const sm = String(data.shift).match(/(\d{1,2})/);
+                        if (sm) shift = parseInt(sm[1], 10);
+                    }
+                    if (shift === 1 || shift === 2) {
+                        shiftInput.value = `${shift} смена`;
+                    }
+                    if (data.start && data.end) {
+                        startInput.value = data.start;
+                        endInput.value = data.end;
+                    } else if (!startInput.value && !endInput.value) {
+                        startInput.value = '';
+                        endInput.value = '';
+                    }
+                } catch (e) {
+                    console.warn('Не удалось определить время/смену для ручного урока', e);
+                }
+            }
+
+            async function loadLessons() {
+                const classGroup = (classInput.value || '').trim();
+                const subjectName = (subjectInput.value || '').trim();
+                if (manualBox.checked) return;
+                if (!classGroup || !subjectName) {
+                    lessonSelect.innerHTML = '<option value="">Выберите урок...</option>';
+                    lessonSelect.disabled = true;
+                    return;
+                }
+                const url = `/replacements/api/special-lessons/?date=${encodeURIComponent(state.selectedDate)}` +
+                    `&class_group=${encodeURIComponent(classGroup)}` +
+                    `&subject=${encodeURIComponent(subjectName)}`;
+                const resp = await fetch(url);
+                const ldata = await resp.json();
+                const lessons = Array.isArray(ldata.lessons) ? ldata.lessons : [];
+                if (lessons.length === 0) {
+                    lessonSelect.innerHTML = '<option value="">Нет уроков</option>';
+                    lessonSelect.disabled = true;
+                    return;
+                }
+                lessonSelect.innerHTML = lessons.map(l => {
+                    const time = (l.start && l.end) ? `${l.start}–${l.end}` : '';
+                    const room = l.classroom ? `, каб. ${l.classroom}` : '';
+                    return `<option value="${l.id}" data-number="${l.lesson_number}" data-start="${l.start}" data-end="${l.end}" data-room="${l.classroom}">` +
+                        `Урок ${l.lesson_number} · ${time}${room}` +
+                        `</option>`;
+                }).join('');
+                lessonSelect.disabled = false;
+            }
+
+            classInput.addEventListener('change', loadLessons);
+            subjectInput.addEventListener('change', loadLessons);
+            classInput.addEventListener('blur', loadLessons);
+            subjectInput.addEventListener('blur', loadLessons);
+            manualBox.addEventListener('change', () => {
+                toggleManualMode();
+                loadLessons();
+                autoFillManualByClassAndLesson();
+            });
+            lessonNumberInput.addEventListener('change', autoFillManualByClassAndLesson);
+            lessonNumberInput.addEventListener('input', autoFillManualByClassAndLesson);
+            classInput.addEventListener('change', autoFillManualByClassAndLesson);
+            classInput.addEventListener('input', autoFillManualByClassAndLesson);
+            classInput.addEventListener('blur', autoFillManualByClassAndLesson);
+            toggleManualMode();
+        },
+        preConfirm: () => {
+            const classGroup = document.getElementById('special-class')?.value.trim();
+            const subjectName = document.getElementById('special-subject')?.value.trim();
+            const lessonSelect = document.getElementById('special-lesson');
+            const isManual = !!document.getElementById('special-manual')?.checked;
+            const lessonId = lessonSelect?.value;
+            const teacherId = $('#special-teacher').val();
+            const teacherName = $('#special-teacher option:selected').text();
+            const originalTeacherId = $('#special-original-teacher').val();
+            const originalTeacherName = $('#special-original-teacher option:selected').text();
+            const lessonNumberRaw = document.getElementById('special-lesson-number')?.value;
+            const startRaw = document.getElementById('special-start')?.value || '';
+            const endRaw = document.getElementById('special-end')?.value || '';
+            const roomRaw = document.getElementById('special-room')?.value || '';
+
+            if (!classGroup || !subjectName || !teacherId || !originalTeacherId) {
+                Swal.showValidationMessage('Укажите класс, предмет, кого замещают и кто замещает.');
+                return false;
+            }
+
+            if (!isManual && !lessonId) {
+                Swal.showValidationMessage('Выберите урок из расписания или включите ручной режим.');
+                return false;
+            }
+
+            if (isManual && !lessonNumberRaw) {
+                Swal.showValidationMessage('Для ручного урока укажите номер урока.');
+                return false;
+            }
+
+            if (isManual && ((startRaw && !endRaw) || (!startRaw && endRaw))) {
+                Swal.showValidationMessage('Для ручного урока заполните и начало, и конец.');
+                return false;
+            }
+
+            let lessonNumber = null;
+            let start = '';
+            let end = '';
+            let classroom = '';
+            let parsedLessonId = null;
+
+            if (isManual) {
+                lessonNumber = parseInt(lessonNumberRaw, 10);
+                start = startRaw;
+                end = endRaw;
+                classroom = roomRaw.trim();
+            } else {
+                const opt = lessonSelect.options[lessonSelect.selectedIndex];
+                parsedLessonId = parseInt(lessonId, 10);
+                lessonNumber = parseInt(opt.getAttribute('data-number'), 10);
+                start = opt.getAttribute('data-start') || '';
+                end = opt.getAttribute('data-end') || '';
+                classroom = opt.getAttribute('data-room') || '';
+            }
+
+            return {
+                class_group: classGroup,
+                subject_name: subjectName,
+                lesson_id: parsedLessonId,
+                lesson_number: lessonNumber,
+                start: start,
+                end: end,
+                classroom: classroom,
+                teacher_id: parseInt(teacherId, 10),
+                teacher_name: teacherName,
+                original_teacher_id: parseInt(originalTeacherId, 10),
+                original_teacher_name: originalTeacherName
+            };
+        }
+    });
+
+    if (result.isConfirmed && result.value) {
+        state.specialReplacements.push(result.value);
+        renderSpecialReplacements();
+    }
+}
+function removeSpecialReplacement(index) {
+    if (!Array.isArray(state.specialReplacements)) return;
+    state.specialReplacements.splice(index, 1);
+    renderSpecialReplacements();
+}
+
+function toggleProductionNecessity(lessonId, checked) {
+    if (!state.replacements[lessonId]) return;
+    state.replacements[lessonId].productionNecessity = !!checked;
+}
+
+function toggleIgnoreInReports(lessonId, checked) {
+    if (!state.replacements[lessonId]) return;
+    state.replacements[lessonId].ignoreInReports = !!checked;
+}
+
+function updateProductionFlagUI(lessonId) {
+    const checkbox = document.querySelector(`.repl-lesson__flag input[data-lesson-id="${lessonId}"][data-flag="production"]`);
+    const ignoreBox = document.querySelector(`.repl-lesson__flag input[data-lesson-id="${lessonId}"][data-flag="ignore"]`);
+    const repl = state.replacements[lessonId];
+    const enabled = !!(repl && repl.replacementTeacherId);
+    if (checkbox) {
+        checkbox.disabled = !enabled;
+        checkbox.checked = !!(repl && repl.productionNecessity);
+    }
+    if (ignoreBox) {
+        ignoreBox.disabled = !enabled;
+        ignoreBox.checked = !!(repl && repl.ignoreInReports);
+    }
+}
+function clearAll() {
+        state = {
+            selectedDate: null,
+            selectedDay: null,
+            teachers: [],
+            lessons: {},
+            replacements: {},
+            specialReplacements: [],
+            teacherHours: {},
+            conflictConfirm: {},
+            clientConflicts: {},
+            serverConflicts: {}
+        };
+        document.getElementById('teachersContainer').innerHTML = '';
+        document.getElementById('teacherSelectContainer').innerHTML = '';
+        renderSpecialReplacements();
+        document.getElementById('datePicker').value = '';
+    }
+
+function addAnotherTeacher() {
+    const newTeacherBlock = document.createElement('div');
+    newTeacherBlock.className = 'repl-picker';
+    newTeacherBlock.innerHTML =
+        `<select class="js-teacher-select repl-picker__select">
+            <option></option>
+        </select>`;
+    document.getElementById('teacherSelectContainer').appendChild(newTeacherBlock);
+    initSelect2(newTeacherBlock);
+
+    const currentReplacements = { ...state.replacements };
+    renderTeacherSelection();
+    state.replacements = currentReplacements;
+}
+
+async function fetchTeacherHours(teacherId) {
+    try {
+        const hoursResponse = await fetch(`/replacements/api/teacher-hours/${teacherId}/?date=${state.selectedDate}`);
+        const hoursData = await hoursResponse.json();
+        state.teacherHours[teacherId] = {
+            base: hoursData.base_hours || 0,
+            replacements: hoursData.replacement_hours || 0
+        };
+    } catch (error) {
+        console.error(`Ошибка загрузки часов учителя ${teacherId}`, error);
+        state.teacherHours[teacherId] = { base: 0, replacements: 0 };
+    }
+}
+
+async function addTeacherToWorkspace(teacherId, teacherName, options = {}) {
+    const id = parseInt(teacherId, 10);
+    if (!id || state.teachers.some(t => t.id === id)) return false;
+
+    state.teachers.push({
+        id,
+        name: String(teacherName || '').trim(),
+        lessons: []
+    });
+
+    await fetchTeacherHours(id);
+    renderTeacherSelection();
+    return await loadTeacherLessons(id, { silentIfNoLessons: !!options.silentIfNoLessons });
+}
+
+async function ensureVacancyTeachersForSelectedDate() {
+    if (!state.selectedDate) return;
+    try {
+        const res = await fetch(`/replacements/api/vacancy-teachers/?date=${encodeURIComponent(state.selectedDate)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const vacancyTeachers = Array.isArray(data.teachers) ? data.teachers : [];
+        for (const t of vacancyTeachers) {
+            await addTeacherToWorkspace(t.id, t.name, { silentIfNoLessons: true });
+        }
+    } catch (e) {
+        console.warn('Не удалось автодобавить учителей «Вакансия»', e);
+    }
+}
+
+function initSelect2(container) {
+    $(container).find('.js-teacher-select').select2({
+        placeholder: "Выберите учителя",
+        ajax: {
+            url: '/replacements/api/teachers/',
+            dataType: 'json',
+            delay: 250,
+            data: params => ({ term: params.term }),
+            processResults: data => ({
+                results: data.results.map(t => ({
+                    id: t.id,
+                    text: `${t.text} ` // Добавляем часы в отображение
+                }))
+            })
+        }
+    }).on('select2:select', async function(e) {
+    const teacherId = e.params.data.id;
+    await addTeacherToWorkspace(
+        teacherId,
+        e.params.data.text.replace(/ \(\d+ ч\/нед\)$/, ''),
+        { silentIfNoLessons: false }
+    );
+});
+
+}
+
+async function loadTeacherLessons(teacherId, options = {}) {
+    const silentIfNoLessons = !!options.silentIfNoLessons;
+    try {
+        const response = await fetch(`/replacements/api/lessons/${teacherId}/${state.selectedDay}/`);
+        const data = await response.json();
+
+        if (!data.lessons || data.lessons.length === 0) {
+            if (!silentIfNoLessons) {
+                AppUI.toast('У выбранного учителя нет уроков на этот день — нечего замещать.', 'warning');
+            }
+            removeTeacher(teacherId);
+            return false;
+        }
+
+        state.lessons[teacherId] = data.lessons.map(lesson => ({
+            id: lesson.id,
+            number: lesson.number,
+            start: lesson.start,
+            end: lesson.end,
+            subject: lesson.subject,
+            class: lesson.class
+        }));
+        renderLessons(teacherId);
+        return true;
+    } catch (error) {
+        AppUI.toast('Ошибка загрузки уроков: ' + error.message, 'danger');
+        return false;
+    }
+}
+
+function renderLessons(teacherId) {
+    const container = document.querySelector(`.repl-teacher[data-teacher-id="${teacherId}"] .lessons-container`);
+    if (!container || !state.lessons[teacherId]) return;
+
+    container.innerHTML = state.lessons[teacherId].map(lesson => {
+        const repl = state.replacements[lesson.id];
+        const replacementName = repl ? getTeacherNameById(repl.replacementTeacherId) : null;
+
+        return `
+          <div class="repl-lesson">
+            <div class="repl-lesson__top">
+              <p class="repl-lesson__title">Урок ${lesson.number}</p>
+              <span class="repl-lesson__time">${lesson.start}–${lesson.end}</span>
+            </div>
+            <p class="repl-lesson__meta">${lesson.subject} · ${lesson.class}</p>
+
+            <!-- Выбор учителя для замены -->
+            <select
+              class="replacement-select"
+              data-lesson-id="${lesson.id}"
+              data-start="${lesson.start}"
+              data-end="${lesson.end}"
+              data-original-teacher-id="${teacherId}"
+              onchange="handleReplacementSelect(${teacherId}, ${lesson.id}, this.value)"
+            >
+              <option value="">Выберите замену...</option>
+            </select>
+
+            <!-- Выбор кабинета для замещения -->
+            
+
+            <label class="repl-lesson__flag">
+              <input type="checkbox"
+                ${repl && repl.productionNecessity ? 'checked' : ''}
+                ${!repl || !repl.replacementTeacherId ? 'disabled' : ''}
+                data-flag="production"
+                data-lesson-id="${lesson.id}" onchange="toggleProductionNecessity(${lesson.id}, this.checked)"
+              >
+              Производственная необходимость
+            </label>
+            <label class="repl-lesson__flag">
+              <input type="checkbox"
+                ${repl && repl.ignoreInReports ? 'checked' : ''}
+                ${!repl || !repl.replacementTeacherId ? 'disabled' : ''}
+                data-flag="ignore"
+                data-lesson-id="${lesson.id}" onchange="toggleIgnoreInReports(${lesson.id}, this.checked)"
+              >
+              Не учитывать в замещениях (дистант)
+            </label>
+            <div id="conflict-holder-${lesson.id}"></div>
+          </div>`;
+    }).join('');
+
+    state.lessons[teacherId].forEach(lesson => {
+        const selectTeacher = container.querySelector(`.replacement-select[data-lesson-id="${lesson.id}"]`);
+        if (state.replacements[lesson.id]) {
+            const repl = state.replacements[lesson.id];
+            if (selectTeacher) selectTeacher.value = repl.replacementTeacherId || '';
+        }
+        if (selectTeacher) loadSuggestions(teacherId, lesson, selectTeacher);
+    });
+}
+
+// Select2-поиск по всем учителям при ручном выборе замещения.
+// Даже если учитель не попал в подсказки, его можно найти по фамилии.
+function initReplacementSelect(selectElement) {
+    if (!selectElement) return;
+    const $sel = $(selectElement);
+
+    // Если уже инициализировано — переинициализируем после перерендера options
+    if ($sel.data('select2')) {
+        $sel.off('select2:select');
+        $sel.select2('destroy');
+    }
+
+    $sel.select2({
+        placeholder: "Выберите замену...",
+        allowClear: true,
+        width: '100%',
+        minimumResultsForSearch: 0,
+        ajax: {
+            url: '/replacements/api/teachers/',
+            dataType: 'json',
+            delay: 250,
+            data: params => ({
+                term: params.term || '',
+                date: state.selectedDate || '',
+                day: state.selectedDay || '',
+                start: (selectElement.dataset && selectElement.dataset.start) ? selectElement.dataset.start : '',
+                end: (selectElement.dataset && selectElement.dataset.end) ? selectElement.dataset.end : '',
+                lesson_id: (selectElement.dataset && selectElement.dataset.lessonId) ? selectElement.dataset.lessonId : ''
+            }),
+            processResults: data => ({ results: data.results || [] })
+        }
+    });
+}
+
+async function loadSuggestions(teacherId, lesson, selectElement) {
+    try {
+        const response = await fetch(
+            `/replacements/api/suggestions/?lesson_id=${lesson.id}` +
+            `&day=${state.selectedDay}` +
+            `&subject=${encodeURIComponent(lesson.subject)}` +
+            `&date=${state.selectedDate}`
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        selectElement.innerHTML = '<option value="">Выберите замену...</option>';
+
+        const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        const eligible = [];
+
+        // --- helpers for overlap checks (selected replacements) ---
+        const toMin = (hhmm) => {
+            const [h, m] = String(hhmm || '0:0').split(':').map(x => parseInt(x, 10));
+            return (h || 0) * 60 + (m || 0);
+        };
+        const overlapsTime = (aStart, aEnd, bStart, bEnd) => {
+            const as = toMin(aStart), ae = toMin(aEnd), bs = toMin(bStart), be = toMin(bEnd);
+            return as < be && ae > bs;
+        };
+        const findLessonById = (lessonId) => {
+            for (const lessons of Object.values(state.lessons)) {
+                const hit = (lessons || []).find(l => l.id === lessonId);
+                if (hit) return hit;
+            }
+            return null;
+        };
+        const isParallelSame = (l1, l2) => {
+            return l1 && l2 && l1.number === l2.number && l1.class === l2.class;
+        };
+
+        suggestions.forEach(teacher => {
+            // Teacher is considered occupied only if there is a TIME overlap with another selected replacement.
+            const isOccupied = Object.values(state.replacements).some(repl => {
+                if (repl.replacementTeacherId !== teacher.id) return false;
+                if (repl.date !== state.selectedDate) return false;
+                if (repl.lessonId === lesson.id) return false;
+                const otherLesson = findLessonById(repl.lessonId);
+                if (!otherLesson) return false;
+                if (!overlapsTime(lesson.start, lesson.end, otherLesson.start, otherLesson.end)) return false;
+                // allow "parallel group" (same class + same lesson number)
+                return !isParallelSame(lesson, otherLesson);
+            });
+
+            const isAbsent = Object.values(state.replacements).some(repl =>
+                repl.originalTeacherId === teacher.id &&
+                repl.date === state.selectedDate
+            );
+
+            const isSecondGroup = teacher.compatibility === "Вторая группа";
+            if (isAbsent && !isSecondGroup) return;
+
+            const crossLevel = teacher.grade_ok === false; // 1-4 vs 5-11 mismatch
+            const shiftMismatch = teacher.shift_ok === false; // teacher works only in other shift (or not at all) this day
+            const hasConflict = teacher.conflict === true;
+            const autoAllowed = teacher.auto_allowed === true;
+            const noLessons = teacher.no_lessons_shift === true; // в этот день у учителя нет уроков в этой смене
+
+            const warnings = [
+                crossLevel ? '⚠ другая ступень (нужно подтверждение)' : null,
+                noLessons ? '⚠ нет уроков в эту смену' : null,
+                (shiftMismatch && !noLessons) ? '⚠ другая смена' : null,
+                hasConflict ? '⛔ конфликт времени' : null,
+            ].filter(Boolean).join(', ');
+
+            let statusLabel = teacher.status || (isSecondGroup ? 'Урок' : 'Свободен');
+            const noLessonsNote = (!isSecondGroup && noLessons) ? ' (в этот день нет уроков в эту смену)' : '';
+            if (isOccupied) statusLabel = 'Урок';
+
+            const option = new Option(
+                `${teacher.name}${noLessonsNote} (${statusLabel}) ${isSecondGroup ? "⭐" : ""} (${teacher.compatibility})` +
+                `${warnings ? ' — ' + warnings : ''}`,
+                teacher.id
+            );
+            // Выбор разрешён даже если учитель занят: в этом случае появится предупреждение + флажок подтверждения.
+            // Пересечение ступеней требует подтверждения.
+            selectElement.appendChild(option);
+
+            // Eligible for AUTO selection only if server says it is allowed
+            // (grade group + shift rules) and the teacher is not occupied by another selected replacement.
+            if (((autoAllowed && !isOccupied && !hasConflict && !noLessons && !crossLevel) || isSecondGroup) && !crossLevel) {
+                eligible.push({
+                    id: teacher.id,
+                    name: teacher.name,
+                    compatibility: teacher.compatibility
+                });
+            }
+        });
+
+        const existingRepl = state.replacements[lesson.id];
+        if (!existingRepl && eligible.length > 0) {
+            let selected = eligible.find(t => t.compatibility === "Вторая группа")
+                || eligible.find(t => t.compatibility === "Специализация")
+                || eligible[0];
+
+            if (selected) {
+                selectElement.value = selected.id;
+                handleReplacementSelect(teacherId, lesson.id, selected.id);
+            }
+        }
+
+        // Если на урок уже выбрана замена (например, загружена из БД),
+        // то выбранный учитель мог не попасть в auto-suggestions (потому что он занят/другая смена и т.д.).
+        // В этом случае добавим его в options принудительно, чтобы выбор не "пропадал" после сохранения.
+        if (state.replacements[lesson.id]) {
+            const selectedId = state.replacements[lesson.id].replacementTeacherId;
+
+            // Если среди option нет нужного teacher_id — подтянем красивый текст через /api/teachers/?teacher_id=...
+            const hasOption = !!selectElement.querySelector(`option[value="${selectedId}"]`);
+            if (!hasOption && selectedId) {
+                try {
+                    const url = `/replacements/api/teachers/?teacher_id=${selectedId}` +
+                        `&date=${encodeURIComponent(state.selectedDate || '')}` +
+                        `&day=${encodeURIComponent(state.selectedDay || '')}` +
+                        `&start=${encodeURIComponent(lesson.start || '')}` +
+                        `&end=${encodeURIComponent(lesson.end || '')}` +
+                        `&lesson_id=${encodeURIComponent(lesson.id)}`;
+
+                    const res = await fetch(url);
+                    const extra = await res.json();
+                    const first = (extra.results || [])[0];
+                    if (first && first.id) {
+                        const opt = new Option(first.text || String(first.id), first.id);
+                        opt.disabled = !!first.disabled;
+                        selectElement.appendChild(opt);
+                    }
+                } catch (e) {
+                    console.warn('Не удалось добавить выбранного учителя в список', e);
+                }
+            }
+
+            selectElement.value = selectedId;
+
+            // Подтягиваем предупреждения (занят/пересечения/нет уроков в смену) и учитываем подтверждения.
+            await fetchServerConflicts(lesson.id, selectedId);
+            recomputeClientConflictsForTeacher(selectedId);
+        }
+
+        // Включаем поиск по всем учителям (Select2) для ручного выбора.
+    } catch (error) {
+        console.error('Ошибка загрузки предложений:', error);
+        if (selectElement && selectElement.options.length === 0) {
+            selectElement.innerHTML = '<option value="">Выберите замену...</option>';
+        }
+    } finally {
+        // Включаем поиск по всем учителям (Select2) для ручного выбора.
+        initReplacementSelect(selectElement);
+    }
+}
+
+
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+
+// --- Конфликты: только предупреждения (без обязательных флажков) ---
+
+function getLessonMetaById(lessonId) {
+    for (const lessons of Object.values(state.lessons || {})) {
+        const hit = (lessons || []).find(l => l.id === lessonId);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+function overlapsTime(aStart, aEnd, bStart, bEnd) {
+    const toMin = (hhmm) => {
+        const [h, m] = String(hhmm || '0:0').split(':').map(x => parseInt(x, 10));
+        return (h || 0) * 60 + (m || 0);
+    };
+    const as = toMin(aStart), ae = toMin(aEnd), bs = toMin(bStart), be = toMin(bEnd);
+    return as < be && ae > bs;
+}
+
+function isParallelSame(l1, l2) {
+    return l1 && l2 && l1.number === l2.number && l1.class === l2.class;
+}
+
+function toggleConflictConfirm(lessonId, checked) {
+    state.conflictConfirm[lessonId] = !!checked;
+    updateSaveButtonState();
+}
+
+function getCombinedConflicts(lessonId) {
+    const s = state.serverConflicts[lessonId] || [];
+    const c = state.clientConflicts[lessonId] || [];
+    return [...s, ...c];
+}
+
+function renderConflictUIForLesson(lessonId) {
+    const holder = document.getElementById(`conflict-holder-${lessonId}`);
+    if (!holder) return;
+
+    const conflicts = getCombinedConflicts(lessonId);
+    if (!conflicts || conflicts.length === 0) {
+        holder.innerHTML = '';
+        delete state.conflictConfirm[lessonId];
+        updateSaveButtonState();
+        updateProductionFlagUI(lessonId);
+        return;
+    }
+
+    const linesHtml = conflicts.map(c => {
+        const t = (c.start && c.end) ? `(${c.start}-${c.end})` : '';
+        const cls = c.class_group || c.class || '';
+        if (c.type === 'lesson') {
+            return `<div class="conflict-line">⚠️ В это время ${t} данный учитель ведёт урок у ${cls} класса.</div>`;
+        }
+        if (c.type === 'replacement') {
+            return `<div class="conflict-line">⚠️ В это время ${t} данный учитель уже поставлен на замещение у ${cls} класса.</div>`;
+        }
+        if (c.type === 'no_lessons') {
+            const sh = (c.shift != null) ? ` (смена ${c.shift})` : '';
+            return `<div class="conflict-line">⚠️ В этот день у выбранного учителя нет уроков в эту смену${sh}. Подтвердите, что он может выйти на замещение.</div>`;
+        }
+        if (c.type === 'cross_level') {
+            return `<div class="conflict-line">⚠️ Учитель другой ступени. Подтвердите замещение.</div>`;
+        }
+        if (c.type === 'room_lesson') {
+            return `<div class="conflict-line">⚠️ В это время ${t} этот кабинет занят уроком у ${cls} класса.</div>`;
+        }
+        if (c.type === 'room_replacement') {
+            return `<div class="conflict-line">⚠️ В это время ${t} этот кабинет уже назначен на замещение у ${cls} класса.</div>`;
+        }
+        if (c.type === 'room_selected') {
+            return `<div class="conflict-line">⚠️ В это время ${t} вы уже выбрали этот кабинет для замещения у ${cls} класса.</div>`;
+        }
+        // client-selected overlap (учитель)
+        return `<div class="conflict-line">⚠️ В это время ${t} вы уже поставили этого учителя на замещение у ${cls} класса.</div>`;
+    }).join('');
+
+    holder.innerHTML = `
+        <div class="conflict-box">
+            ${linesHtml}
+        </div>
+    `;
+
+    updateSaveButtonState();
+}
+
+function updateSaveButtonState() {
+    const btn = document.getElementById('saveButton');
+    if (!btn) return;
+    btn.disabled = false;
+    btn.title = '';
+}
+
+async function fetchServerConflicts(lessonId, teacherId) {
+    const meta = getLessonMetaById(lessonId);
+    if (!meta || !teacherId || !state.selectedDate || !state.selectedDay) {
+        // Если нет данных для запроса, удаляем только конфликты от учителя, сохраняя конфликты по кабинетам
+        if (state.serverConflicts[lessonId]) {
+            const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'teacher');
+            if (remain.length > 0) {
+                state.serverConflicts[lessonId] = remain;
+            } else {
+                delete state.serverConflicts[lessonId];
+            }
+        }
+        renderConflictUIForLesson(lessonId);
+        return;
+    }
+
+    try {
+        const url =
+            `/replacements/api/teacher-conflicts/?teacher_id=${teacherId}` +
+            `&date=${encodeURIComponent(state.selectedDate)}` +
+            `&day=${encodeURIComponent(state.selectedDay)}` +
+            `&start=${encodeURIComponent(meta.start)}` +
+            `&end=${encodeURIComponent(meta.end)}` +
+            `&lesson_id=${encodeURIComponent(lessonId)}`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
+        // Отмечаем источник конфликта как teacher и объединяем с существующими (кабинет) конфликтами
+        const teacherConfs = conflicts.map(c => Object.assign({}, c, { _source: 'teacher' }));
+        let existing = state.serverConflicts[lessonId] || [];
+        // Оставляем только конфликты не от учителя (например, кабинеты)
+        existing = existing.filter(c => c._source !== 'teacher');
+        const merged = existing.concat(teacherConfs);
+        if (merged.length > 0) {
+            state.serverConflicts[lessonId] = merged;
+            // по умолчанию сбрасываем подтверждение при появлении конфликтов
+            if (state.conflictConfirm[lessonId] !== true) {
+                state.conflictConfirm[lessonId] = false;
+            }
+        } else {
+            delete state.serverConflicts[lessonId];
+        }
+        renderConflictUIForLesson(lessonId);
+    } catch (e) {
+        console.warn('Не удалось получить конфликты с сервера', e);
+        // не блокируем UI, просто убираем серверные конфликты
+        delete state.serverConflicts[lessonId];
+        renderConflictUIForLesson(lessonId);
+    }
+}
+
+// --- Конфликты по кабинетам (сервер) ---
+async function fetchRoomServerConflicts(lessonId, room) {
+    const meta = getLessonMetaById(lessonId);
+    // Если нет даты/дня/меты или не выбран кабинет — очищаем только конфликты по кабинетам
+    if (!room || !meta || !state.selectedDate || !state.selectedDay) {
+        if (state.serverConflicts[lessonId]) {
+            const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+            if (remain.length > 0) {
+                state.serverConflicts[lessonId] = remain;
+            } else {
+                delete state.serverConflicts[lessonId];
+            }
+        }
+        renderConflictUIForLesson(lessonId);
+        return;
+    }
+    try {
+        const url = `/replacements/api/room-conflicts/?classroom=${encodeURIComponent(room)}` +
+            `&date=${encodeURIComponent(state.selectedDate)}` +
+            `&day=${encodeURIComponent(state.selectedDay)}` +
+            `&start=${encodeURIComponent(meta.start)}` +
+            `&end=${encodeURIComponent(meta.end)}` +
+            `&lesson_id=${encodeURIComponent(lessonId)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
+        const roomConfs = conflicts.map(c => Object.assign({}, c, { _source: 'room' }));
+        let existing = state.serverConflicts[lessonId] || [];
+        existing = existing.filter(c => c._source !== 'room');
+        const merged = existing.concat(roomConfs);
+        if (merged.length > 0) {
+            state.serverConflicts[lessonId] = merged;
+            if (state.conflictConfirm[lessonId] !== true) {
+                state.conflictConfirm[lessonId] = false;
+            }
+        } else {
+            delete state.serverConflicts[lessonId];
+        }
+        renderConflictUIForLesson(lessonId);
+    } catch (e) {
+        console.warn('Не удалось получить конфликты по кабинету с сервера', e);
+        if (state.serverConflicts[lessonId]) {
+            const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+            if (remain.length > 0) {
+                state.serverConflicts[lessonId] = remain;
+            } else {
+                delete state.serverConflicts[lessonId];
+            }
+        }
+        renderConflictUIForLesson(lessonId);
+    }
+}
+
+// --- Пересечения выбранных кабинетов в клиенте ---
+function recomputeClientRoomConflicts(room) {
+    if (!room) return;
+    const lessonIds = Object.values(state.replacements || {})
+        .filter(r => r.date === state.selectedDate && r.replacementClassroom === room)
+        .map(r => r.lessonId);
+    lessonIds.forEach(lid => {
+        if (state.clientConflicts[lid]) {
+            state.clientConflicts[lid] = state.clientConflicts[lid].filter(c => c._source !== 'room');
+            if (state.clientConflicts[lid].length === 0) {
+                delete state.clientConflicts[lid];
+            }
+        }
+    });
+    for (let i = 0; i < lessonIds.length; i++) {
+        const aId = lessonIds[i];
+        const a = getLessonMetaById(aId);
+        if (!a) continue;
+        for (let j = i + 1; j < lessonIds.length; j++) {
+            const bId = lessonIds[j];
+            const b = getLessonMetaById(bId);
+            if (!b) continue;
+            if (overlapsTime(a.start, a.end, b.start, b.end) && !isParallelSame(a, b)) {
+                if (!state.clientConflicts[aId]) state.clientConflicts[aId] = [];
+                if (!state.clientConflicts[bId]) state.clientConflicts[bId] = [];
+                state.clientConflicts[aId].push({ type: 'room_selected', start: b.start, end: b.end, class_group: b.class, lesson_number: b.number, _source: 'room' });
+                state.clientConflicts[bId].push({ type: 'room_selected', start: a.start, end: a.end, class_group: a.class, lesson_number: a.number, _source: 'room' });
+                if (state.conflictConfirm[aId] !== true) state.conflictConfirm[aId] = false;
+                if (state.conflictConfirm[bId] !== true) state.conflictConfirm[bId] = false;
+            }
+        }
+    }
+    lessonIds.forEach(lid => {
+        renderConflictUIForLesson(lid);
+    });
+    updateSaveButtonState();
+}
+
+// --- Загрузка списка кабинетов ---
+async function loadRoomOptions(lesson, selectElement) {
+    if (!selectElement) return;
+    if (!state.selectedDate || !state.selectedDay) {
+        selectElement.innerHTML = '<option value="">Кабинет...</option>';
+        return;
+    }
+    try {
+        const url = `/replacements/api/available-rooms/?lesson_id=${lesson.id}` +
+            `&date=${encodeURIComponent(state.selectedDate)}` +
+            `&day=${encodeURIComponent(state.selectedDay)}` +
+            `&start=${encodeURIComponent(lesson.start)}` +
+            `&end=${encodeURIComponent(lesson.end)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        selectElement.innerHTML = '<option value="">Кабинет...</option>';
+        const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+        rooms.forEach(r => {
+            const name = r.value;
+            const status = r.status || '';
+            const text = status ? `${name} (${status})` : `${name}`;
+            const opt = new Option(text, name);
+            opt.disabled = false;
+            selectElement.appendChild(opt);
+        });
+        const repl = state.replacements[lesson.id];
+        if (repl && repl.replacementClassroom) {
+            const selected = repl.replacementClassroom;
+            let has = false;
+            for (let i = 0; i < selectElement.options.length; i++) {
+                if (selectElement.options[i].value === selected) {
+                    has = true;
+                    break;
+                }
+            }
+            if (!has) {
+                const opt2 = new Option(`${selected} (занят)`, selected);
+                opt2.disabled = false;
+                selectElement.appendChild(opt2);
+            }
+            selectElement.value = selected;
+        }
+    } catch (e) {
+        console.error('Ошибка загрузки кабинетов:', e);
+    }
+}
+
+// --- Обработчик выбора кабинета ---
+async function handleRoomSelect(lessonId, roomValue) {
+    const prevRepl = state.replacements[lessonId];
+    const prevRoom = prevRepl ? prevRepl.replacementClassroom : '';
+    if (!roomValue) {
+        if (prevRepl) {
+            delete prevRepl.replacementClassroom;
+            if (!prevRepl.replacementTeacherId) {
+                delete state.replacements[lessonId];
+            }
+        }
+        if (state.serverConflicts[lessonId]) {
+            const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+            if (remain.length > 0) {
+                state.serverConflicts[lessonId] = remain;
+            } else {
+                delete state.serverConflicts[lessonId];
+            }
+        }
+        if (state.clientConflicts[lessonId]) {
+            state.clientConflicts[lessonId] = state.clientConflicts[lessonId].filter(c => c._source !== 'room');
+            if (state.clientConflicts[lessonId].length === 0) {
+                delete state.clientConflicts[lessonId];
+            }
+        }
+        delete state.conflictConfirm[lessonId];
+        if (prevRoom) recomputeClientRoomConflicts(prevRoom);
+        renderConflictUIForLesson(lessonId);
+        updateSaveButtonState();
+        updateProductionFlagUI(lessonId);
+        return;
+    }
+    let repl = state.replacements[lessonId];
+    if (!repl) {
+        let origId = null;
+        for (const [tId, lessons] of Object.entries(state.lessons || {})) {
+            const hit = (lessons || []).find(l => l.id === lessonId);
+            if (hit) {
+                origId = parseInt(tId);
+                break;
+            }
+        }
+        repl = {
+            lessonId: lessonId,
+            originalTeacherId: origId,
+            replacementTeacherId: null,
+            productionNecessity: false,
+            ignoreInReports: false,
+            replacementClassroom: roomValue,
+            date: state.selectedDate
+        };
+        state.replacements[lessonId] = repl;
+    } else {
+        repl.replacementClassroom = roomValue;
+    }
+    await fetchRoomServerConflicts(lessonId, roomValue);
+    recomputeClientRoomConflicts(roomValue);
+    if (prevRoom && prevRoom !== roomValue) {
+        recomputeClientRoomConflicts(prevRoom);
+    }
+    updateSaveButtonState();
+}
+
+function recomputeClientConflictsForTeacher(teacherId) {
+    if (!teacherId) return;
+
+    // уроки (lessonId), где выбран этот teacherId
+    const lessonIds = Object.values(state.replacements || {})
+        .filter(r => r.date === state.selectedDate && r.replacementTeacherId === teacherId)
+        .map(r => r.lessonId);
+
+    // Сбросим старые конфликты для этих уроков (только от учителя)
+    lessonIds.forEach(lid => {
+        if (state.clientConflicts[lid]) {
+            state.clientConflicts[lid] = state.clientConflicts[lid].filter(c => c._source !== 'teacher');
+            if (state.clientConflicts[lid].length === 0) {
+                delete state.clientConflicts[lid];
+            }
+        }
+    });
+
+    for (let i = 0; i < lessonIds.length; i++) {
+        const aId = lessonIds[i];
+        const a = getLessonMetaById(aId);
+        if (!a) continue;
+
+        for (let j = i + 1; j < lessonIds.length; j++) {
+            const bId = lessonIds[j];
+            const b = getLessonMetaById(bId);
+            if (!b) continue;
+
+            if (overlapsTime(a.start, a.end, b.start, b.end) && !isParallelSame(a, b)) {
+                // добавляем конфликт на оба урока и помечаем источник
+                if (!state.clientConflicts[aId]) state.clientConflicts[aId] = [];
+                if (!state.clientConflicts[bId]) state.clientConflicts[bId] = [];
+                state.clientConflicts[aId].push({ type: 'selected', start: b.start, end: b.end, class_group: b.class, lesson_number: b.number, _source: 'teacher' });
+                state.clientConflicts[bId].push({ type: 'selected', start: a.start, end: a.end, class_group: a.class, lesson_number: a.number, _source: 'teacher' });
+
+                // требуем подтверждение
+                if (state.conflictConfirm[aId] !== true) state.conflictConfirm[aId] = false;
+                if (state.conflictConfirm[bId] !== true) state.conflictConfirm[bId] = false;
+            }
+        }
+    }
+
+    // чистим пустые
+    lessonIds.forEach(lid => {
+        if (state.clientConflicts[lid] && state.clientConflicts[lid].length === 0) {
+            delete state.clientConflicts[lid];
+        }
+        renderConflictUIForLesson(lid);
+    });
+}
+async function saveReplacements() {
+    if (!state.selectedDate) {
+        AppUI.toast('Сначала выберите дату!', 'warning');
+        return;
+    }
+
+    try {
+        const checkRes = await fetch(`/replacements/api/check-replacements/?date=${state.selectedDate}`);
+        const checkData = await checkRes.json();
+
+        let replace_all = false;
+        if (checkData.exists) {
+            const confirmClear = confirm("🔄 На эту дату уже есть замены. Перезаписать их новыми?");
+            if (!confirmClear) {
+                AppUI.toast('Замены не изменены.', 'info');
+                return;
+            }
+            // Важно: не удаляем заранее отдельным запросом, чтобы не потерять данные при ошибке.
+            // Сервер перезапишет всё В ТРАНЗАКЦИИ.
+            replace_all = true;
+        }
+
+        const replacements = Object.values(state.replacements).map(repl => ({
+            lesson_id: repl.lessonId,
+            original_id: repl.originalTeacherId,
+            teacher_id: repl.replacementTeacherId,
+            date: state.selectedDate,
+            confirmed: true,
+            production_necessity: repl.productionNecessity === true,
+            ignore_in_reports: repl.ignoreInReports === true
+        }));
+
+        const saveRes = await fetch('/replacements/api/save/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ replacements, replace_all, special_replacements: state.specialReplacements || [], special_replacements_date: state.selectedDate })
+        });
+
+        const saveData = await saveRes.json();
+        if (saveRes.ok && saveData.status === 'success') {
+            AppUI.toast('Замены успешно сохранены!', 'success');
+            // Mark this date in the calendar as having replacements
+            if (state.selectedDate) {
+                markedDates.add(state.selectedDate);
+                if (datePickerFp) datePickerFp.redraw();
+            }
+            await fetchSavedReplacements();
+        } else {
+            AppUI.toast('Ошибка при сохранении: ' + (saveData.error || ''), 'danger');
+        }
+
+    } catch (err) {
+        console.error("Ошибка сохранения:", err);
+        AppUI.toast('Ошибка при сохранении замен.', 'danger');
+    }
+}
+
+async function handleReplacementSelect(originalTeacherId, lessonId, replacementTeacherId) {
+    // Приводим входящее значение к числу или null
+    let newTeacherId = parseInt(replacementTeacherId);
+    if (isNaN(newTeacherId)) newTeacherId = null;
+
+    const prevRepl = state.replacements[lessonId];
+    const prevTeacherId = prevRepl ? prevRepl.replacementTeacherId : null;
+    const prevRoom = prevRepl ? prevRepl.replacementClassroom : '';
+    const prevProd = prevRepl ? !!prevRepl.productionNecessity : false;
+    const prevIgnore = prevRepl ? !!prevRepl.ignoreInReports : false;
+
+    // Если меняем учителя — удаляем только учительские конфликты
+    if (prevTeacherId && prevTeacherId !== newTeacherId) {
+        if (state.serverConflicts[lessonId]) {
+            const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'teacher');
+            if (remain.length > 0) {
+                state.serverConflicts[lessonId] = remain;
+            } else {
+                delete state.serverConflicts[lessonId];
+            }
+        }
+        if (state.clientConflicts[lessonId]) {
+            state.clientConflicts[lessonId] = state.clientConflicts[lessonId].filter(c => c._source !== 'teacher');
+            if (state.clientConflicts[lessonId].length === 0) {
+                delete state.clientConflicts[lessonId];
+            }
+        }
+        delete state.conflictConfirm[lessonId];
+        renderConflictUIForLesson(lessonId);
+    }
+
+    // Если выбор учителя очищен
+    if (!newTeacherId) {
+        // Если была комната — сохраняем её, иначе полностью удаляем запись
+        if (prevRepl && prevRepl.replacementClassroom) {
+            state.replacements[lessonId] = {
+                lessonId: lessonId,
+                originalTeacherId: originalTeacherId,
+                replacementTeacherId: null,
+                productionNecessity: prevProd,
+                ignoreInReports: prevIgnore,
+                replacementClassroom: prevRepl.replacementClassroom,
+                date: state.selectedDate
+            };
+        } else {
+            if (prevTeacherId) {
+                recomputeClientConflictsForTeacher(prevTeacherId);
+            }
+            // удаляем все конфликты для урока
+            if (state.serverConflicts[lessonId]) {
+                delete state.serverConflicts[lessonId];
+            }
+            if (state.clientConflicts[lessonId]) {
+                delete state.clientConflicts[lessonId];
+            }
+            delete state.conflictConfirm[lessonId];
+            delete state.replacements[lessonId];
+        }
+        // Комнаты не обрабатываются в календаре замещений учителей
+        updateSaveButtonState();
+        updateProductionFlagUI(lessonId);
+        return;
+    }
+
+    // Устанавливаем запись замены с новым учителем, сохраняя комнату (если была)
+    state.replacements[lessonId] = {
+        lessonId: lessonId,
+        originalTeacherId: originalTeacherId,
+        replacementTeacherId: newTeacherId,
+        productionNecessity: prevProd,
+        ignoreInReports: prevIgnore,
+        replacementClassroom: prevRoom || '',
+        date: state.selectedDate
+    };
+
+    // Обновим конфликты (сервер + выбранные замены)
+    await fetchServerConflicts(lessonId, newTeacherId);
+    recomputeClientConflictsForTeacher(newTeacherId);
+    if (prevTeacherId && prevTeacherId !== newTeacherId) {
+        recomputeClientConflictsForTeacher(prevTeacherId);
+    }
+    // Комнаты не обрабатываются в календаре замещений учителей
+
+    const originalLesson = Object.values(state.lessons[originalTeacherId] || []).find(l => l.id === lessonId);
+    if (!originalLesson) return;
+
+    for (const [otherTeacherId, lessons] of Object.entries(state.lessons)) {
+        if (parseInt(otherTeacherId) === originalTeacherId) continue;
+
+        const parallel = lessons.find(l =>
+            l.number === originalLesson.number &&
+            l.class === originalLesson.class
+        );
+
+        if (parallel && !state.replacements[parallel.id]) {
+            state.replacements[parallel.id] = {
+                lessonId: parallel.id,
+                originalTeacherId: parseInt(otherTeacherId),
+                replacementTeacherId: newTeacherId,
+                productionNecessity: prevProd,
+                ignoreInReports: prevIgnore,
+                replacementClassroom: '',
+                date: state.selectedDate
+            };
+            const select = document.querySelector(`[data-lesson-id="${parallel.id}"]`);
+            if (select) {
+                select.value = newTeacherId;
+            }
+            await fetchServerConflicts(parallel.id, newTeacherId);
+            recomputeClientConflictsForTeacher(newTeacherId);
+        }
+    }
+    updateProductionFlagUI(lessonId);
+}
+
+async function exportToDoc() {
+    if (!state.selectedDate) {
+        AppUI.toast('Сначала выберите дату в календаре!', 'warning');
+        return;
+    }
+
+    try {
+        const allReplacements = Object.values(state.replacements)
+            .filter(repl => repl.date === state.selectedDate && repl.replacementTeacherId && !repl.ignoreInReports);
+        const normalReplacements = allReplacements.filter(repl => !repl.productionNecessity);
+        const prodReplacements = allReplacements.filter(repl => repl.productionNecessity);
+        const specialItems = Array.isArray(state.specialReplacements) ? state.specialReplacements : [];
+
+        if (normalReplacements.length === 0 && prodReplacements.length === 0 && specialItems.length === 0) {
+            AppUI.toast('Нет замен для выбранной даты.', 'info');
+            return;
+        }
+
+        const rowsNormal = await buildExportRows(normalReplacements);
+        const rowsProd = await buildExportRows(prodReplacements);
+        const rowsSpecial = buildSpecialExportRows(specialItems);
+        const rowsNormalAll = [...rowsNormal, ...rowsSpecial];
+
+        const groupedNormalByTeacher = groupRowsByOriginalTeacher(rowsNormalAll);
+        const groupedProdByTeacher = groupRowsByOriginalTeacher(rowsProd);
+        const groupedNormalByCategory = groupTeachersByDominantCategory(groupedNormalByTeacher);
+        const groupedProdByCategory = groupTeachersByDominantCategory(groupedProdByTeacher);
+
+        const docElements = [];
+        const [y, m, d] = (state.selectedDate || '').split('-').map(x => parseInt(x, 10));
+        const dt = new Date(y || 2000, (m || 1) - 1, d || 1);
+        const dayNames = ['ВОСКРЕСЕНЬЕ', 'ПОНЕДЕЛЬНИК', 'ВТОРНИК', 'СРЕДА', 'ЧЕТВЕРГ', 'ПЯТНИЦА', 'СУББОТА'];
+        const dayName = dayNames[dt.getDay()] || '';
+        const formattedDateShort = `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${String(y).slice(-2)}`;
+        docElements.push(
+            new docx.Paragraph({
+                text: `Замещение уроков на ${dayName} (${formattedDateShort})`,
+                heading: docx.HeadingLevel.HEADING_1,
+                alignment: docx.AlignmentType.CENTER,
+                spacing: { after: 300 },
+                style: "customStyle"
+            })
+        );
+
+        for (const [categoryName, teachersMap] of Object.entries(groupedNormalByCategory || {})) {
+            docElements.push(
+                new docx.Paragraph({
+                    children: [
+                        new docx.TextRun({
+                            text: (categoryName || "Без предмета").toUpperCase(),
+                            color: "FF0000",
+                            bold: true
+                        })
+                    ],
+                    heading: docx.HeadingLevel.HEADING_2,
+                    alignment: docx.AlignmentType.CENTER,
+                    spacing: { after: 200 },
+                    style: "customStyle"
+                }),
+                ...generateTeacherTables(teachersMap)
+            );
+        }
+
+        if (Object.keys(groupedProdByCategory || {}).length > 0) {
+            docElements.push(
+                new docx.Paragraph({
+                    text: 'Замещения по производственной необходимости',
+                    heading: docx.HeadingLevel.HEADING_1,
+                    alignment: docx.AlignmentType.CENTER,
+                    spacing: { after: 300 },
+                    style: "customStyle"
+                })
+            );
+            for (const [categoryName, teachersMap] of Object.entries(groupedProdByCategory)) {
+                docElements.push(
+                    new docx.Paragraph({
+                        children: [
+                            new docx.TextRun({
+                                text: (categoryName || "Без предмета").toUpperCase(),
+                                color: "FF0000",
+                                bold: true
+                            })
+                        ],
+                        heading: docx.HeadingLevel.HEADING_2,
+                        alignment: docx.AlignmentType.CENTER,
+                        spacing: { after: 200 },
+                        style: "customStyle"
+                    }),
+                    ...generateTeacherTables(teachersMap)
+                );
+            }
+        }
+
+        const doc = new docx.Document({
+            styles: {
+                paragraphStyles: [
+                    {
+                        id: "customStyle",
+                        name: "Custom Style",
+                        basedOn: "Normal",
+                        next: "Normal",
+                        run: {
+                            font: "Times New Roman",
+                            size: 22
+                        },
+                        paragraph: {
+                            alignment: docx.AlignmentType.CENTER
+                        }
+                    }
+                ]
+            },
+            sections: [{
+                properties: {},
+                children: docElements
+            }]
+        });
+
+        const blob = await docx.Packer.toBlob(doc);
+        saveAs(blob, `Замены_${state.selectedDate}.docx`);
+        AppUI.toast('Документ успешно сгенерирован!', 'success');
+
+    } catch (error) {
+        console.error("🚨 Ошибка экспорта:", error);
+        AppUI.toast('Ошибка при экспорте. Проверьте консоль для деталей.', 'danger');
+    }
+}
+function normalizeVacancyName(name) {
+    const raw = String(name || '').trim();
+    const low = raw.toLowerCase();
+    if (low.includes('вакан') || low.includes('vakans')) {
+        return 'Вакансия';
+    }
+    return raw || '—';
+}
+
+function normalizeSubjectName(name) {
+    return String(name || '').replace(/\s+/g, ' ').trim();
+}
+
+function formatTimeRange(start, end) {
+    const s = String(start || '').trim();
+    const e = String(end || '').trim();
+    if (s && e) return `${s}-${e}`;
+    if (s) return s;
+    if (e) return e;
+    return "--:--";
+}
+
+function isRovSubject(name) {
+    const n = normalizeSubjectName(name).toLowerCase();
+    return n.includes('ров');
+}
+
+function subjectCategory(name) {
+    const n = normalizeSubjectName(name).toLowerCase();
+    if (!n) return "Без предмета";
+    if (n.includes('русск') || n.includes('литерат') || n.includes('сво') || n.includes('своип')) {
+        return "Русский язык";
+    }
+    if (
+        n.includes('матем') ||
+        n.includes('алгебр') ||
+        n.includes('геометр') ||
+        n.includes('физик') ||
+        n.includes('информат') ||
+        n.includes('обр. инф') ||
+        n.includes('обр.инф.') ||
+        n.includes('обр инф') ||
+        n.includes('мат практикум') ||
+        n.includes('мат. практикум') ||
+        n.includes('мат грамотност') ||
+        n.includes('мат. грамотност')
+    ) {
+        return "Математика";
+    }
+    return normalizeSubjectName(name) || "Без предмета";
+}
+
+async function buildExportRows(replacements) {
+    const rows = [];
+    for (const repl of replacements) {
+        try {
+            const lesson = await fetchLessonDetails(repl.lessonId);
+            const originalTeacherRaw = await fetchTeacherName(repl.originalTeacherId);
+            const replacementTeacher = await fetchTeacherName(repl.replacementTeacherId);
+
+            const subjectKey = normalizeSubjectName(lesson.subject) || "Без предмета";
+            const shiftNum = parseInt(lesson.shift, 10);
+            const shift = (shiftNum === 1 || shiftNum === 2) ? shiftNum : null;
+
+            rows.push({
+                subject: subjectKey,
+                shift,
+                number: lesson.number ?? null,
+                time: formatTimeRange(lesson.start, lesson.end),
+                class: lesson.class || "-",
+                room: lesson.room || "---",
+                subjectRow: lesson.subject || "-",
+                original: normalizeVacancyName(originalTeacherRaw),
+                replacement: replacementTeacher || "—"
+            });
+        } catch (error) {
+            console.warn(`⚠️ Пропущена замена для урока ${repl.lessonId}:`, error);
+        }
+    }
+    return rows;
+}
+
+function buildSpecialExportRows(items) {
+    const rows = [];
+    (items || []).forEach(item => {
+        const subjectKey = normalizeSubjectName(item.subject_name) || "Без предмета";
+        rows.push({
+            subject: subjectKey,
+            shift: null,
+            number: item.lesson_number ?? null,
+            time: formatTimeRange(item.start, item.end),
+            class: item.class_group || "-",
+            room: item.classroom || "---",
+            subjectRow: item.subject_name || "-",
+            original: item.original_teacher_name || "—",
+            replacement: item.teacher_name || getTeacherNameById(item.teacher_id) || "—"
+        });
+    });
+    return rows;
+}
+
+function groupRowsBySubjectAndOriginal(rows) {
+    // Precompute teacher categories based on non-РОВ subjects
+    const teacherCats = {};
+    for (const row of (rows || [])) {
+        const origKey = String(row.original || "—").trim() || "—";
+        if (isRovSubject(row.subjectRow || row.subject)) continue;
+        const cat = subjectCategory(row.subject);
+        if (!teacherCats[origKey]) teacherCats[origKey] = new Set();
+        teacherCats[origKey].add(cat);
+    }
+
+    const grouped = {};
+    for (const row of (rows || [])) {
+        const origKey = String(row.original || "—").trim() || "—";
+        let subjectKey = subjectCategory(row.subject);
+        if (isRovSubject(row.subjectRow || row.subject)) {
+            const set = teacherCats[origKey];
+            if (set && set.size > 0) {
+                if (set.has("Русский язык")) subjectKey = "Русский язык";
+                else if (set.has("Математика")) subjectKey = "Математика";
+                else subjectKey = Array.from(set)[0];
+            }
+        }
+        if (!grouped[subjectKey]) grouped[subjectKey] = {};
+        if (!grouped[subjectKey][origKey]) grouped[subjectKey][origKey] = {};
+        const shiftKey = (row.shift === 1 || row.shift === 2) ? String(row.shift) : "0";
+        if (!grouped[subjectKey][origKey][shiftKey]) grouped[subjectKey][origKey][shiftKey] = [];
+        grouped[subjectKey][origKey][shiftKey].push(row);
+    }
+
+    // sort keys for stable output
+    const sorted = {};
+    const subjectOrder = ["Русский язык", "Математика"];
+    const subjects = Object.keys(grouped).sort((a, b) => {
+        const ai = subjectOrder.indexOf(a);
+        const bi = subjectOrder.indexOf(b);
+        if (ai !== -1 || bi !== -1) {
+            if (ai === -1) return 1;
+            if (bi === -1) return -1;
+            if (ai !== bi) return ai - bi;
+        }
+        return a.localeCompare(b, 'ru');
+    });
+    for (const subj of subjects) {
+        const teachers = grouped[subj];
+        const tSorted = {};
+        const teacherNames = Object.keys(teachers).sort((a, b) => a.localeCompare(b, 'ru'));
+        for (const t of teacherNames) {
+            tSorted[t] = teachers[t];
+        }
+        sorted[subj] = tSorted;
+    }
+    return sorted;
+}
+
+function groupRowsByOriginalTeacher(rows) {
+    const grouped = {};
+    for (const row of (rows || [])) {
+        const teacher = String(row.original || "—").trim() || "—";
+        if (!grouped[teacher]) grouped[teacher] = {};
+        const shiftKey = (row.shift === 1 || row.shift === 2) ? String(row.shift) : "0";
+        if (!grouped[teacher][shiftKey]) grouped[teacher][shiftKey] = [];
+        grouped[teacher][shiftKey].push(row);
+    }
+
+    const sorted = {};
+    const names = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
+    for (const name of names) {
+        sorted[name] = grouped[name];
+    }
+    return sorted;
+}
+
+function dominantSubjectForTeacherShifts(shifts) {
+    const counts = {};
+    for (const rows of Object.values(shifts || {})) {
+        for (const row of (rows || [])) {
+            const key = subjectCategory(row.subjectRow || row.subject || "");
+            counts[key] = (counts[key] || 0) + 1;
+        }
+    }
+    const entries = Object.entries(counts).sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return String(a[0]).localeCompare(String(b[0]), 'ru');
+    });
+    return entries.length ? entries[0][0] : "Без предмета";
+}
+
+function groupTeachersByDominantCategory(groupedByTeacher) {
+    const byCategory = {};
+    for (const [teacherName, shifts] of Object.entries(groupedByTeacher || {})) {
+        const cat = dominantSubjectForTeacherShifts(shifts) || "Без предмета";
+        if (!byCategory[cat]) byCategory[cat] = {};
+        byCategory[cat][teacherName] = shifts;
+    }
+    const sorted = {};
+    const keys = Object.keys(byCategory).sort((a, b) => a.localeCompare(b, 'ru'));
+    for (const k of keys) {
+        sorted[k] = byCategory[k];
+    }
+    return sorted;
+}
+
+function generateTeacherTables(teachers) {
+    const elements = [];
+    const headerCells = [
+        "Время", "Номер урока", "Класс", "Кабинет", "Предмет",
+        "Отсутствующий учитель", "Замещающий учитель"
+    ];
+    const colWidths = [12, 4, 10, 10, 26, 19, 19]; // %: чуть меньше для "Номер урока", разницу отдали "Предмет"
+
+    const makeCell = (text, widthPct, shading = null) => new docx.TableCell({
+        width: { size: widthPct, type: docx.WidthType.PERCENTAGE },
+        shading: shading ? { fill: shading } : undefined,
+        children: [new docx.Paragraph({
+            text,
+            alignment: docx.AlignmentType.CENTER,
+            style: "customStyle"
+        })]
+    });
+
+    const shiftOrder = ["1", "2", "0"];
+    for (const [origTeacher, shifts] of Object.entries(teachers || {})) {
+        const rows = [];
+
+        for (const sKey of shiftOrder) {
+            const lessons = shifts[sKey] || [];
+            if (!lessons.length) continue;
+
+            const shiftLabel = (sKey === "1") ? "1 смена" : (sKey === "2") ? "2 смена" : "Без смены";
+            rows.push(new docx.TableRow({
+                children: [
+                    new docx.TableCell({
+                        children: [new docx.Paragraph({
+                            text: shiftLabel,
+                            alignment: docx.AlignmentType.CENTER,
+                            style: "customStyle"
+                        })],
+                        columnSpan: 7
+                    })
+                ]
+            }));
+
+            // Header row (after shift label)
+            rows.push(new docx.TableRow({
+                children: headerCells.map((text, idx) => makeCell(text, colWidths[idx], "D3D3D3"))
+            }));
+
+            const sortedLessons = [...lessons].sort((a, b) => {
+                const aN = parseInt(a.number ?? 0, 10);
+                const bN = parseInt(b.number ?? 0, 10);
+                if (aN !== bN) return aN - bN;
+                return String(a.class || '').localeCompare(String(b.class || ''), 'ru');
+            });
+
+            for (const lesson of sortedLessons) {
+                rows.push(new docx.TableRow({
+                    children: [
+                        lesson.time || "--:--",
+                        String(lesson.number ?? "-"),
+                        lesson.class ?? "-",
+                        lesson.room ?? "---",
+                        lesson.subjectRow ?? "-",
+                        lesson.original ?? "-",
+                        lesson.replacement ?? "-"
+                    ].map((text, idx) => makeCell(text, colWidths[idx]))
+                }));
+            }
+        }
+
+        elements.push(
+            new docx.Table({
+                width: { size: 100, type: docx.WidthType.PERCENTAGE },
+                rows
+            }),
+            new docx.Paragraph({
+                text: "",
+                spacing: { after: 200 }
+            })
+        );
+    }
+
+    return elements;
+}
+
+async function fetchLessonDetails(lessonId) {
+    try {
+        const response = await fetch(`/replacements/api/lessons/${lessonId}/`);
+        if (!response.ok) throw new Error("Урок не найден");
+        return await response.json();
+    } catch (error) {
+        console.error("Ошибка загрузки урока:", error);
+        return { subject: "Неизвестно", class: "—", room: "—" }; // Заглушки
+    }
+}
+
+async function fetchTeacherName(teacherId) {
+    if (!teacherId) return "Вакансия";
+    try {
+        const response = await fetch(`/replacements/api/teachers/${teacherId}/`);
+        if (!response.ok) throw new Error("Учитель не найден");
+        const data = await response.json();
+        return data.name || "Неизвестно";
+    } catch (error) {
+        console.error("Ошибка загрузки учителя:", error);
+        return "Неизвестно";
+    }
+}
+
+function removeTeacher(teacherId) {
+    state.teachers = state.teachers.filter(t => t.id !== teacherId);
+    delete state.lessons[teacherId];
+    delete state.teacherHours[teacherId];
+    for (const key in state.replacements) {
+        if (state.replacements[key].originalTeacherId === teacherId) {
+            delete state.replacements[key];
+        }
+    }
+    renderTeacherSelection();
+}
+
+function toggleLessons(teacherId, forceOpen = null) {
+    const root = document.querySelector(`.repl-teacher[data-teacher-id='${teacherId}']`);
+    const container = root ? root.querySelector('.lessons-container') : null;
+    if (!root || !container) return;
+
+    const btn = root.querySelector('button[data-action="toggle"]');
+    const hidden = (container.style.display === 'none' || getComputedStyle(container).display === 'none');
+    const open = (forceOpen === true) ? true : (forceOpen === false ? false : hidden);
+    container.style.display = open ? 'grid' : 'none';
+    if (btn) btn.textContent = open ? '▴' : '▾';
+}
+
+function goToMainMenu() {
+    window.location.href = "/"; //
+}
+
+function getTeacherNameById(id) {
+    const teacher = state.teachers.find(t => t.id === id);
+    return teacher ? teacher.name : "—";
+}
+
+async function downloadReplacementReport() {
+    if (!state.selectedDate) {
+        AppUI.toast('Сначала выберите дату.', 'warning');
+        return;
+    }
+
+    try {
+        const pickName = (d) => {
+            // filename*=UTF-8''...
+            const mStar = d.match(/filename\*=UTF-8''([^;]+)/i);
+            if (mStar && mStar[1]) {
+                try { return decodeURIComponent(mStar[1]); } catch (e) { return mStar[1]; }
+            }
+            const m = d.match(/filename="([^"]+)"/i);
+            if (m && m[1]) return m[1];
+            return null;
+        };
+
+        const downloadReportFile = async (url, fallbackFileName) => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("Ошибка при получении отчёта");
+            const dispo = response.headers.get('Content-Disposition') || '';
+            const fileName = pickName(dispo) || fallbackFileName;
+            const blob = await response.blob();
+            const objUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objUrl;
+            a.download = fileName;
+            a.click();
+            window.URL.revokeObjectURL(objUrl);
+        };
+
+        await downloadReportFile(
+            `/replacements/api/replacement-report/?date=${state.selectedDate}`,
+            `Приказ_о_замещении_${state.selectedDate}.docx`
+        );
+        await downloadReportFile(
+            `/replacements/api/replacement-report-extra/?date=${state.selectedDate}`,
+            `Сводка_замещений_${state.selectedDate}.docx`
+        );
+        await downloadReportFile(
+            `/replacements/api/replacement-report-extra-teacher/?date=${state.selectedDate}`,
+            `Сводка_по_педагогам_${state.selectedDate}.docx`
+        );
+    } catch (error) {
+        console.error('Ошибка загрузки отчета:', error);
+        AppUI.toast('Ошибка при генерации отчёта.', 'danger');
+    }
+}
+
+
+    </script>
+{% endblock %}

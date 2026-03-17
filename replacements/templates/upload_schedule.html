@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+
+{% block title %}Текущее расписание · ИС замещений{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Текущее расписание</h1>
+      <p class="page-subtitle">Классы сгруппированы по параллелям. Можно сменить учителя прямо в списке.</p>
+    </div>
+    <div class="row">
+      <button class="btn btn--secondary" type="button" onclick="openBulkReassignModal()">Перенести все уроки</button>
+      <a class="btn btn--ghost" href="/upload/">К загрузке</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <div id="uploadScheduleContainer" class="upload-schedule"></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+  <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+  <style>
+    .upload-schedule { display: grid; gap: 16px; }
+    .upload-schedule .schedule-class { border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 12px; }
+    .upload-schedule .schedule-class .badge { display: inline-block; }
+    .upload-schedule .schedule-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .upload-schedule .schedule-grid th, .upload-schedule .schedule-grid td { vertical-align: top; padding: 8px 10px; border-bottom: 1px solid rgba(15, 23, 42, 0.08); }
+    .upload-schedule .schedule-grid th { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(15, 23, 42, 0.7); background: rgba(15, 23, 42, 0.03); }
+    .upload-schedule .lesson-meta { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+    .upload-schedule .lesson-num { font-weight: 700; }
+    .upload-schedule .lesson-time { font-size: 12px; color: rgba(15, 23, 42, 0.65); }
+    .upload-schedule .schedule-cell { font-size: 13px; text-align: center; }
+    .upload-schedule .schedule-block { padding: 6px 4px; border-bottom: 1px dashed rgba(31, 41, 55, 0.16); }
+    .upload-schedule .schedule-block:last-child { border-bottom: 0; }
+    .upload-schedule .schedule-cell .subject { font-weight: 600; text-align: center; }
+    .upload-schedule .schedule-cell .room { font-size: 12px; color: rgba(15, 23, 42, 0.65); text-align: center; }
+    .upload-schedule .teacher-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .upload-schedule .teacher-name { font-weight: 600; text-align: center; }
+    .upload-schedule .teacher-action { margin-top: 2px; }
+    .upload-schedule .schedule-cell.empty { color: rgba(15, 23, 42, 0.45); }
+    @media (max-width: 980px) {
+      .upload-schedule .schedule-grid, .upload-schedule .schedule-grid thead, .upload-schedule .schedule-grid tbody, .upload-schedule .schedule-grid tr, .upload-schedule .schedule-grid th, .upload-schedule .schedule-grid td {
+        display: block;
+        width: 100%;
+      }
+      .upload-schedule .schedule-grid thead { display: none; }
+      .upload-schedule .schedule-grid tr {
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin: 10px 0;
+        background: rgba(15, 23, 42, 0.02);
+      }
+      .upload-schedule .schedule-grid td { border: none; padding: 6px 0; }
+      .upload-schedule .schedule-grid td[data-day-label]::before {
+        content: attr(data-day-label) ": ";
+        font-weight: 700;
+        margin-right: 6px;
+      }
+      .upload-schedule .lesson-meta { align-items: flex-start; text-align: left; }
+      .upload-schedule .schedule-cell,
+      .upload-schedule .schedule-cell .subject,
+      .upload-schedule .schedule-cell .room,
+      .upload-schedule .teacher-name { text-align: left; }
+      .upload-schedule .teacher-cell { align-items: flex-start; }
+    }
+  </style>
+{% endblock %}
+
+{% block extra_js %}
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script>
+    const dayLabels = { "пн": "Пн", "вт": "Вт", "ср": "Ср", "чт": "Чт", "пт": "Пт", "сб": "Сб", "вс": "Вс" };
+    let uploadLessonsById = {};
+
+    function escapeHtml(str) {
+      return String(str || "").replace(/[&<>\"']/g, s => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[s]));
+    }
+
+    function getCookie(name) {
+      const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith(name + '='));
+      return cookieValue ? decodeURIComponent(cookieValue.split('=')[1]) : '';
+    }
+
+    async function loadUploadSchedule() {
+      const container = document.getElementById('uploadScheduleContainer');
+      if (!container) return;
+      container.innerHTML = '<div class="muted">Загрузка расписания…</div>';
+      try {
+        const res = await fetch('/replacements/api/upload-schedule/');
+        const data = await res.json();
+        const classes = Array.isArray(data.classes) ? data.classes : [];
+
+        uploadLessonsById = {};
+        classes.forEach(cls => {
+          (cls.lessons || []).forEach(lsn => {
+            uploadLessonsById[lsn.id] = lsn;
+          });
+        });
+
+        if (classes.length === 0) {
+          container.innerHTML = '<div class="muted">Нет активного расписания.</div>';
+          return;
+        }
+
+        container.innerHTML = classes.map(cls => {
+          const dayOrder = ['пн', 'вт', 'ср', 'чт', 'пт'];
+          const lessonsByDay = {};
+          const lessonNumbersSet = new Set();
+          const lessonMetaByNumber = {};
+
+          (cls.lessons || []).forEach(lesson => {
+            const key = lesson.day || '';
+            if (!lessonsByDay[key]) lessonsByDay[key] = {};
+            if (!lessonsByDay[key][lesson.lesson_number]) {
+              lessonsByDay[key][lesson.lesson_number] = [];
+            }
+            lessonsByDay[key][lesson.lesson_number].push(lesson);
+            if (lesson.lesson_number != null) {
+              lessonNumbersSet.add(lesson.lesson_number);
+              if (!lessonMetaByNumber[lesson.lesson_number]) {
+                lessonMetaByNumber[lesson.lesson_number] = lesson;
+              }
+            }
+          });
+
+          const lessonNumbers = Array.from(lessonNumbersSet).sort((a, b) => (a || 0) - (b || 0));
+
+          const rows = lessonNumbers.map(num => {
+            const meta = lessonMetaByNumber[num] || {};
+            const time = meta.start && meta.end ? `${meta.start}–${meta.end}` : '—';
+            const dayCells = dayOrder.map(dayKey => {
+              const lessons = lessonsByDay[dayKey]?.[num] || [];
+              if (!lessons.length) {
+                return `<td class="schedule-cell empty" data-day-label="${dayLabels[dayKey]}">—</td>`;
+              }
+              const blocks = lessons.map(lesson => `
+                <div class="schedule-block" data-lesson-id="${lesson.id}">
+                  <div class="subject">${escapeHtml(lesson.subject || '')}</div>
+                  <div class="room">${escapeHtml(lesson.classroom || '')}</div>
+                  <div class="teacher-cell">
+                    <span class="teacher-name">${escapeHtml(lesson.teacher_name || '')}</span>
+                    <button class="btn btn--ghost btn--sm teacher-action" type="button" onclick="openTeacherChangeModal(${lesson.id})">Сменить</button>
+                  </div>
+                </div>
+              `).join('');
+              return `
+                <td class="schedule-cell" data-day-label="${dayLabels[dayKey]}">
+                  ${blocks}
+                </td>
+              `;
+            }).join('');
+
+            return `
+              <tr>
+                <td data-day-label="Урок/время">
+                  <div class="lesson-meta">
+                    <div class="lesson-num">Урок ${num}</div>
+                    <div class="lesson-time">${escapeHtml(time)}</div>
+                  </div>
+                </td>
+                ${dayCells}
+              </tr>
+            `;
+          }).join('');
+
+          return `
+            <div class="schedule-class">
+              <div class="card__body stack">
+                <div class="badge">Класс ${escapeHtml(cls.class_group)}</div>
+                <div class="table-wrap">
+                  <table class="schedule-grid">
+                    <thead>
+                      <tr>
+                        <th style="width: 140px">Урок / время</th>
+                        ${dayOrder.map(d => `<th>${dayLabels[d]}</th>`).join('')}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${rows || `<tr><td colspan="${dayOrder.length + 1}" class="muted">Нет уроков</td></tr>`}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        console.error(e);
+        container.innerHTML = '<div class="muted">Не удалось загрузить расписание.</div>';
+      }
+    }
+
+    async function openTeacherChangeModal(lessonId) {
+      const lesson = uploadLessonsById[lessonId];
+      if (!lesson) return;
+
+      const result = await Swal.fire({
+        title: 'Сменить учителя',
+        html: `
+          <div class="stack" style="text-align: left;">
+            <div class="muted">Класс: <strong>${escapeHtml(lesson.class_group)}</strong></div>
+            <div class="muted">Предмет: <strong>${escapeHtml(lesson.subject)}</strong></div>
+            <div>
+              <label class="field-label" for="upload-teacher-select">Учитель</label>
+              <select id="upload-teacher-select" class="field" style="width: 100%;"></select>
+            </div>
+            <label class="repl-lesson__flag" style="margin-top: 4px;">
+              <input id="change-all-subjects-flag" type="checkbox">
+              Сменить все уроки этого предмета у этого класса (только у текущего учителя)
+            </label>
+            <div class="muted">Если флажок выключен — изменится только этот урок.</div>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Сохранить',
+        cancelButtonText: 'Отмена',
+        focusConfirm: false,
+        didOpen: () => {
+          const $sel = $('#upload-teacher-select');
+          if (lesson.teacher_id) {
+            const opt = new Option(lesson.teacher_name || '', lesson.teacher_id, true, true);
+            $sel.append(opt);
+          }
+          $sel.select2({
+            placeholder: 'Выберите учителя',
+            dropdownParent: $('.swal2-container'),
+            ajax: {
+              url: '/replacements/api/teachers-all/',
+              dataType: 'json',
+              delay: 250,
+              data: params => ({ term: params.term }),
+              processResults: data => ({ results: data.results || [] })
+            }
+          });
+        },
+        preConfirm: () => {
+          const teacherId = $('#upload-teacher-select').val();
+          const applyAllSubjects = !!document.getElementById('change-all-subjects-flag')?.checked;
+          if (!teacherId) {
+            Swal.showValidationMessage('Выберите учителя.');
+            return false;
+          }
+          return {
+            teacher_id: parseInt(teacherId, 10),
+            apply_all_subjects: applyAllSubjects
+          };
+        }
+      });
+
+      if (!result.isConfirmed || !result.value) return;
+
+      try {
+        const res = await fetch(`/replacements/api/lessons/${lessonId}/teacher/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+          },
+          body: JSON.stringify(result.value)
+        });
+        const rawText = await res.text();
+        let data = null;
+        const trimmed = rawText.trim();
+        if (trimmed && (trimmed.startsWith('{') || trimmed.startsWith('['))) {
+          try { data = JSON.parse(trimmed); } catch (e) {}
+        }
+        if (!res.ok || !data || data.status !== 'success') {
+          const snippet = trimmed ? trimmed.slice(0, 180) : '';
+          const msg = (data && data.error) ? data.error : (snippet || `HTTP ${res.status}`);
+          throw new Error(msg || 'Не удалось обновить учителя');
+        }
+        const updatedCount = Number(data.updated_count || 0);
+        const mode = data.mode || 'single_lesson';
+        lesson.teacher_id = result.value.teacher_id;
+        lesson.teacher_name = data.teacher_name || lesson.teacher_name;
+
+        await loadUploadSchedule();
+        if (window.AppUI) {
+          const modeLabel = (mode === 'class_all_subjects')
+            ? 'всех предметов класса'
+            : (mode === 'class_same_subject' || mode === 'class_same_subject_same_teacher')
+              ? 'всех уроков этого предмета у класса'
+              : 'текущего урока';
+          AppUI.toast(`Учитель обновлён для ${modeLabel}: ${updatedCount} урок(е/ах).`, 'success');
+        }
+      } catch (e) {
+        console.error(e);
+        if (window.AppUI) {
+          AppUI.toast(`Ошибка при обновлении учителя: ${e.message || ''}`, 'danger');
+        }
+      }
+    }
+
+    async function openBulkReassignModal() {
+      const result = await Swal.fire({
+        title: 'Перенести все уроки',
+        html: `
+          <div class="stack" style="text-align: left;">
+            <div>
+              <label class="field-label" for="bulk-from-teacher">С учителя</label>
+              <select id="bulk-from-teacher" class="field" style="width: 100%;"></select>
+            </div>
+            <div>
+              <label class="field-label" for="bulk-to-teacher">На учителя</label>
+              <select id="bulk-to-teacher" class="field" style="width: 100%;"></select>
+            </div>
+            <label class="repl-lesson__flag" style="margin-top: 4px;">
+              <input id="bulk-active-only" type="checkbox" checked>
+              Только активное расписание
+            </label>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Перенести',
+        cancelButtonText: 'Отмена',
+        focusConfirm: false,
+        didOpen: () => {
+          const config = {
+            placeholder: 'Выберите учителя',
+            dropdownParent: $('.swal2-container'),
+            ajax: {
+              url: '/replacements/api/teachers-all/',
+              dataType: 'json',
+              delay: 250,
+              data: params => ({ term: params.term || '' }),
+              processResults: data => ({ results: data.results || [] })
+            }
+          };
+          $('#bulk-from-teacher').select2(config);
+          $('#bulk-to-teacher').select2(config);
+        },
+        preConfirm: () => {
+          const fromTeacherId = parseInt($('#bulk-from-teacher').val(), 10);
+          const toTeacherId = parseInt($('#bulk-to-teacher').val(), 10);
+          const activeOnly = !!document.getElementById('bulk-active-only')?.checked;
+          if (!fromTeacherId || !toTeacherId) {
+            Swal.showValidationMessage('Выберите обоих учителей.');
+            return false;
+          }
+          if (fromTeacherId === toTeacherId) {
+            Swal.showValidationMessage('Учителя должны отличаться.');
+            return false;
+          }
+          return { from_teacher_id: fromTeacherId, to_teacher_id: toTeacherId, active_only: activeOnly };
+        }
+      });
+
+      if (!result.isConfirmed || !result.value) return;
+
+      try {
+        const res = await fetch('/replacements/api/reassign-teacher-lessons/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+          },
+          body: JSON.stringify(result.value)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status !== 'success') {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        await loadUploadSchedule();
+        if (window.AppUI) {
+          AppUI.toast(`Перенесено уроков: ${Number(data.updated_count || 0)}.`, 'success');
+        }
+      } catch (e) {
+        console.error(e);
+        if (window.AppUI) {
+          AppUI.toast(`Ошибка переноса уроков: ${e.message || ''}`, 'danger');
+        }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadUploadSchedule);
+  </script>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Управление пользователями{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="hero-title">Управление пользователями</h1>
+      <p class="hero-subtitle">Создание, редактирование и удаление учётных записей.</p>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <a class="btn btn--primary" href="{% url 'accounts:register' %}">Регистрация нового пользователя</a>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Логин</th>
+          <th>ФИО</th>
+          <th>Доступы</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.full_name|default:"—" }}</td>
+          <td>
+            {% if u.is_superuser %}
+              Все
+            {% else %}
+              {% if u.can_calendar %}Календарь {% endif %}
+              {% if u.can_teachers %}Учителя {% endif %}
+              {% if u.can_editor %}Редактор {% endif %}
+              {% if u.can_upload %}Загрузка {% endif %}
+              {% if u.can_logs or u.is_staff %}Логи {% endif %}
+              {% if u.can_calls %}Звонки {% endif %}
+              {% if u.can_users %}Пользователи{% endif %}
+              {% if not u.can_calendar and not u.can_teachers and not u.can_editor and not u.can_upload and not u.can_logs and not u.can_calls and not u.can_users %}
+                —
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>
+            <a class="btn btn--secondary btn--sm" href="{% url 'accounts:user_edit' u.id %}">Изменить</a>
+            {% if not u.is_superuser %}
+              <a class="btn btn--ghost btn--sm" href="{% url 'accounts:user_delete' u.id %}" onclick="return confirm('Удалить пользователя?');">Удалить</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

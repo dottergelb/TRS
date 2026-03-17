@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}Главное меню · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="hero-title">Информационная система подбора учителей при замещении уроков</h1>
+      <p class="hero-subtitle">Работа с замещениями, специализациями, расписанием звонков и загрузкой расписания.</p>
+    </div>
+  </div>
+
+  <div class="grid grid--2">
+    {% if user.is_superuser or user.can_calendar %}
+    <div class="card">
+      <div class="card__header">
+        <div class="menu-card__top">
+          <div class="menu-card__icon" aria-hidden="true">🗓</div>
+          <div class="card__headtext">
+            <h2 class="card__title">Замещения</h2>
+          </div>
+        </div>
+      </div>
+      <div class="card__body">
+        <p class="menu-card__desc">Календарь, автоподбор и ручное назначение.</p>
+        <div class="row">
+          <a class="btn btn--primary" href="/replacements/calendar/">Открыть календарь</a>
+          <a class="btn btn--secondary" href="/replacements/api/replacement-report/" onclick="event.preventDefault(); AppUI.toast('Откройте календарь и нажмите «Сформировать отчёт».', 'info');">Как сформировать отчёт</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if user.is_superuser or user.can_calendar or user.can_logs %}
+    <div class="card">
+      <div class="card__header">
+        <div class="menu-card__top">
+          <div class="menu-card__icon" aria-hidden="true">📊</div>
+          <div class="card__headtext">
+            <h2 class="card__title">Статистика</h2>
+          </div>
+        </div>
+      </div>
+      <div class="card__body">
+        <p class="menu-card__desc">Аналитика замещений за день, период и месяц.</p>
+        <div class="row">
+          <a class="btn btn--primary" href="/replacements/stats/">Открыть статистику</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if user.is_superuser or user.can_teachers or user.can_editor %}
+    <div class="card">
+      <div class="card__header">
+        <div class="menu-card__top">
+          <div class="menu-card__icon" aria-hidden="true">👩‍🏫</div>
+          <div class="card__headtext">
+            <h2 class="card__title">Учителя</h2>
+          </div>
+        </div>
+      </div>
+      <div class="card__body">
+        <p class="menu-card__desc">Просмотр предметов учителей.</p>
+        <div class="row">
+          {% if user.is_superuser or user.can_teachers %}
+            <a class="btn btn--primary" href="/replacements/specializations/">Учителя</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# New card for managing classroom replacements (Cabinet substitutions) #}
+    {% if user.is_superuser or user.can_calendar or user.can_calls %}
+    <div class="card">
+      <div class="card__header">
+        <div class="menu-card__top">
+          <div class="menu-card__icon" aria-hidden="true">🏠</div>
+          <div class="card__headtext">
+            <h2 class="card__title">Кабинеты</h2>
+          </div>
+        </div>
+      </div>
+      <div class="card__body">
+        <p class="menu-card__desc">Замены помещений (кабинетов) отдельно от учителей.</p>
+        <div class="row">
+          <a class="btn btn--primary" href="/replacements/cabinets/">Открыть</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if user.is_superuser or user.can_calls or user.can_upload or user.can_users %}
+    <div class="page-header" style="margin-top: 14px;">
+      <div>
+        <h2 class="page-title" style="font-size: 18px;">Администрирование</h2>
+        <p class="page-subtitle">Разделы доступны согласно правам доступа.</p>
+      </div>
+    </div>
+
+    <div class="grid grid--3">
+      {% if user.is_superuser or user.can_calls %}
+      <div class="card">
+        <div class="card__header">
+          <div class="menu-card__top">
+            <div class="menu-card__icon" aria-hidden="true">🕒</div>
+            <div class="card__headtext">
+              <h3 class="card__title">Звонки</h3>
+            </div>
+          </div>
+        </div>
+        <div class="card__body">
+          <p class="menu-card__desc">Расписание уроков по классам и сменам.</p>
+          <a class="btn btn--primary" href="/schedule/">Открыть</a>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user.is_superuser or user.can_upload %}
+      <div class="card">
+        <div class="card__header">
+          <div class="menu-card__top">
+            <div class="menu-card__icon" aria-hidden="true">📁</div>
+            <div class="card__headtext">
+              <h3 class="card__title">Загрузка расписания</h3>
+            </div>
+          </div>
+        </div>
+        <div class="card__body">
+          <p class="menu-card__desc">Импорт HTML расписания и парсинг.</p>
+          <div class="stack" style="max-width: 220px;">
+            <a class="btn btn--primary" href="/upload/">Загрузка</a>
+            <a class="btn btn--secondary" href="/upload/schedule/">Расписание</a>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user.is_superuser or user.can_users %}
+      <div class="card">
+        <div class="card__header">
+          <div class="menu-card__top">
+            <div class="menu-card__icon" aria-hidden="true">➕</div>
+            <div class="card__headtext">
+              <h3 class="card__title">Пользователи</h3>
+            </div>
+          </div>
+        </div>
+        <div class="card__body">
+          <p class="menu-card__desc">Управление учётными записями пользователей.</p>
+          <a class="btn btn--primary" href="{% url 'accounts:user_list' %}">Открыть</a>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

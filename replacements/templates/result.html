@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Результат загрузки · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">✅ Расписание загружено</h1>
+      <p class="page-subtitle">Ниже — результат парсинга (сохранённые/подготовленные записи).</p>
+    </div>
+    <div class="row">
+      <a class="btn btn--ghost" href="/upload/">⟵ Вернуться</a>
+      <a class="btn btn--primary" href="/replacements/">🏠 В меню</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <div class="row" style="margin-bottom: 10px;">
+        <span class="badge">Записей: {{ result|length }}</span>
+        {% if class_count %}<span class="badge">Классов: {{ class_count }}</span>{% endif %}
+      </div>
+
+      <div class="table-wrap" role="region" aria-label="Таблица результатов парсинга">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Класс</th>
+              <th style="text-align:right">Смена</th>
+              <th style="text-align:right">Урок</th>
+              <th>Начало</th>
+              <th>Конец</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in result %}
+              <tr>
+                <td><strong>{{ row.class_group }}</strong></td>
+                <td style="text-align:right">{{ row.shift }}</td>
+                <td style="text-align:right">{{ row.lesson_number }}</td>
+                <td>{{ row.start_time }}</td>
+                <td>{{ row.end_time }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="muted">Нет данных для отображения.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

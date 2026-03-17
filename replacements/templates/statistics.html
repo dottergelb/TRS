@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+
+{% block title %}Статистика замещений{% endblock %}
+
+{% block extra_head %}
+<style>
+  .stats-toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .stats-mode-group {
+    display: inline-flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .kpi {
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(15, 118, 110, 0.08), rgba(15, 118, 110, 0.02));
+  }
+  .kpi__label {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .kpi__value {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 900;
+    line-height: 1;
+  }
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bars--scroll {
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 6px;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 2fr) minmax(220px, 6fr) minmax(44px, auto);
+    align-items: center;
+    gap: 10px;
+  }
+  .bar-label {
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bar-track {
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(15, 118, 110, 0.12);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0f766e, #14b8a6);
+  }
+  .bar-value {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 800;
+  }
+  .daily-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    min-height: 180px;
+    padding-top: 14px;
+    overflow-x: auto;
+  }
+  .daily-col {
+    min-width: 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .daily-col__bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 8px 8px 2px 2px;
+    background: linear-gradient(180deg, #e07a5f, #0f766e);
+  }
+  .daily-col__lbl {
+    font-size: 11px;
+    color: var(--muted);
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+  .hidden { display: none !important; }
+
+  .bar-value {
+    justify-self: end;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Статистика замещений</h1>
+      <p class="page-subtitle">Аналитика по замещениям за день, период или месяц.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__header card__header--stack">
+      <div class="stats-toolbar">
+        <div class="field">
+          <label class="label">Режим</label>
+          <div class="stats-mode-group">
+            <button type="button" id="modeDay" class="btn btn--primary">День</button>
+            <button type="button" id="modePeriod" class="btn btn--secondary">Период</button>
+            <button type="button" id="modeMonth" class="btn btn--secondary">Месяц</button>
+          </div>
+        </div>
+
+        <div class="field" id="dayField">
+          <label class="label" for="dayDate">Дата</label>
+          <input id="dayDate" type="date" />
+        </div>
+
+        <div class="field hidden" id="periodFromField">
+          <label class="label" for="periodFrom">От</label>
+          <input id="periodFrom" type="date" />
+        </div>
+        <div class="field hidden" id="periodToField">
+          <label class="label" for="periodTo">До</label>
+          <input id="periodTo" type="date" />
+        </div>
+
+        <div class="field hidden" id="monthField">
+          <label class="label" for="monthDate">Месяц</label>
+          <input id="monthDate" type="month" />
+        </div>
+
+        <div class="field">
+          <button type="button" id="loadStatsBtn" class="btn btn--primary">Обновить</button>
+        </div>
+        <div class="field">
+          <button type="button" id="downloadReportBtn" class="btn btn--ghost">Сформировать отчёт</button>
+        </div>
+      </div>
+    </div>
+    <div class="card__body">
+      <p id="rangeLabel" class="page-subtitle" style="margin-top: 0;">Диапазон: -</p>
+    </div>
+  </div>
+
+  <div class="grid grid--3" style="margin-top: 14px;">
+    <div class="kpi">
+      <p class="kpi__label">Уроков на замещение</p>
+      <p id="kpiLessons" class="kpi__value">0</p>
+    </div>
+    <div class="kpi">
+      <p class="kpi__label">Отсутствующих учителей</p>
+      <p id="kpiAbsent" class="kpi__value">0</p>
+    </div>
+    <div class="kpi">
+      <p class="kpi__label">Задействовано замещающих</p>
+      <p id="kpiReplacing" class="kpi__value">0</p>
+    </div>
+  </div>
+
+  <div class="grid grid--2" style="margin-top: 14px;">
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Кто больше всего замещал</h2>
+      </div>
+      <div class="card__body">
+        <div id="topReplacing" class="bars"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Кого чаще замещали</h2>
+      </div>
+      <div class="card__body">
+        <div id="topAbsent" class="bars"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 14px;">
+    <div class="card__header">
+      <h2 class="card__title">Динамика по дням</h2>
+    </div>
+    <div class="card__body">
+      <div id="dailyChart" class="daily-chart"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 14px;">
+    <div class="card__header">
+      <h2 class="card__title">Общая статистика: сколько всего замещали</h2>
+    </div>
+    <div class="card__body">
+      <div id="allReplacing" class="bars bars--scroll"></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const monthStr = today.toISOString().slice(0, 7);
+
+    const modeDayBtn = document.getElementById('modeDay');
+    const modePeriodBtn = document.getElementById('modePeriod');
+    const modeMonthBtn = document.getElementById('modeMonth');
+    const loadBtn = document.getElementById('loadStatsBtn');
+    const reportBtn = document.getElementById('downloadReportBtn');
+
+    const dayField = document.getElementById('dayField');
+    const periodFromField = document.getElementById('periodFromField');
+    const periodToField = document.getElementById('periodToField');
+    const monthField = document.getElementById('monthField');
+
+    const dayDate = document.getElementById('dayDate');
+    const periodFrom = document.getElementById('periodFrom');
+    const periodTo = document.getElementById('periodTo');
+    const monthDate = document.getElementById('monthDate');
+
+    const rangeLabel = document.getElementById('rangeLabel');
+    const kpiLessons = document.getElementById('kpiLessons');
+    const kpiAbsent = document.getElementById('kpiAbsent');
+    const kpiReplacing = document.getElementById('kpiReplacing');
+    const topReplacing = document.getElementById('topReplacing');
+    const topAbsent = document.getElementById('topAbsent');
+    const allReplacing = document.getElementById('allReplacing');
+    const dailyChart = document.getElementById('dailyChart');
+
+    let mode = 'day';
+    dayDate.value = todayStr;
+    periodFrom.value = todayStr;
+    periodTo.value = todayStr;
+    monthDate.value = monthStr;
+
+    function setMode(next) {
+      mode = next;
+      modeDayBtn.className = next === 'day' ? 'btn btn--primary' : 'btn btn--secondary';
+      modePeriodBtn.className = next === 'period' ? 'btn btn--primary' : 'btn btn--secondary';
+      modeMonthBtn.className = next === 'month' ? 'btn btn--primary' : 'btn btn--secondary';
+
+      dayField.classList.toggle('hidden', next !== 'day');
+      periodFromField.classList.toggle('hidden', next !== 'period');
+      periodToField.classList.toggle('hidden', next !== 'period');
+      monthField.classList.toggle('hidden', next !== 'month');
+    }
+
+    function renderBars(container, rows, emptyText) {
+      container.innerHTML = '';
+      if (!rows || !rows.length) {
+        container.innerHTML = '<p class="page-subtitle" style="margin:0;">' + emptyText + '</p>';
+        return;
+      }
+      rows.forEach(function (row) {
+        const hasSplit = typeof row.regular_count !== 'undefined' || typeof row.special_count !== 'undefined';
+        const regularCount = hasSplit ? (row.regular_count || 0) : 0;
+        const specialCount = hasSplit ? (row.special_count || 0) : 0;
+        const valueText = hasSplit
+          ? (specialCount > 0 ? (regularCount + '+' + specialCount) : String(regularCount))
+          : (row.count || 0);
+        const r = document.createElement('div');
+        r.className = 'bar-row';
+        r.innerHTML = ''
+          + '<div class="bar-label" title="' + (row.teacher || '') + '">' + (row.teacher || '-') + '</div>'
+          + '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(0, Math.min(100, row.share || 0)) + '%"></div></div>'
+          + '<div class="bar-value">' + valueText + '</div>';
+        container.appendChild(r);
+      });
+    }
+
+    function renderDaily(rows) {
+      dailyChart.innerHTML = '';
+      if (!rows || !rows.length) {
+        dailyChart.innerHTML = '<p class="page-subtitle" style="margin:0;">Нет данных</p>';
+        return;
+      }
+      const max = rows.reduce(function (acc, item) {
+        return Math.max(acc, item.count || 0);
+      }, 0);
+      rows.forEach(function (item) {
+        const col = document.createElement('div');
+        col.className = 'daily-col';
+        const h = max > 0 ? Math.max(2, Math.round(((item.count || 0) / max) * 150)) : 2;
+        const tip = 'Замещений: ' + (item.count || 0)
+          + ' | Отсутствующих: ' + (item.absent_teachers || 0)
+          + ' | Замещающих: ' + (item.replacement_teachers || 0)
+          + ' | Обычные (вкл. отдельные): ' + (item.regular_replacements || 0)
+          + ' | Производственная необходимость: ' + (item.special_replacements || 0);
+        col.innerHTML = ''
+          + '<div class="daily-col__bar" style="height:' + h + 'px" title="' + tip + '"></div>'
+          + '<div class="daily-col__lbl">' + (item.label || '') + '</div>';
+        dailyChart.appendChild(col);
+      });
+    }
+
+    function buildRangeParams() {
+      const params = new URLSearchParams();
+      params.set('mode', mode);
+      if (mode === 'day') {
+        params.set('date', dayDate.value || todayStr);
+      } else if (mode === 'period') {
+        params.set('date_from', periodFrom.value || todayStr);
+        params.set('date_to', periodTo.value || todayStr);
+      } else {
+        params.set('month', monthDate.value || monthStr);
+      }
+      return params;
+    }
+
+    function fileNameFromDisposition(disposition, fallbackName) {
+      const dispo = disposition || '';
+      const utf8Match = dispo.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          return decodeURIComponent(utf8Match[1]);
+        } catch (e) {
+          return utf8Match[1];
+        }
+      }
+      const basicMatch = dispo.match(/filename="([^"]+)"/i);
+      if (basicMatch && basicMatch[1]) {
+        return basicMatch[1];
+      }
+      return fallbackName;
+    }
+
+    function fallbackReportNames() {
+      if (mode === 'day') {
+        const d = dayDate.value || todayStr;
+        return {
+          docx: 'Приказ_о_замещении_' + d + '.docx',
+          summaryDocx: 'Сводка_замещений_' + d + '.docx',
+          teacherSummaryDocx: 'Сводка_по_педагогам_' + d + '.docx'
+        };
+      }
+      if (mode === 'period') {
+        const from = periodFrom.value || todayStr;
+        const to = periodTo.value || todayStr;
+        return {
+          docx: 'Приказ_о_замещении_' + from + '_' + to + '.docx',
+          summaryDocx: 'Сводка_замещений_' + from + '_' + to + '.docx',
+          teacherSummaryDocx: 'Сводка_по_педагогам_' + from + '_' + to + '.docx'
+        };
+      }
+      const m = monthDate.value || monthStr;
+      return {
+        docx: 'Приказ_о_замещении_' + m + '.docx',
+        summaryDocx: 'Сводка_замещений_' + m + '.docx',
+        teacherSummaryDocx: 'Сводка_по_педагогам_' + m + '.docx'
+      };
+    }
+
+    async function downloadFile(url, fallbackName) {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        let message = 'Ошибка формирования отчёта';
+        try {
+          const data = await response.json();
+          if (data && data.error) message = data.error;
+        } catch (e) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const fileName = fileNameFromDisposition(response.headers.get('Content-Disposition'), fallbackName);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      a.click();
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    async function downloadReports() {
+      reportBtn.disabled = true;
+      try {
+        const params = buildRangeParams();
+        const names = fallbackReportNames();
+        await downloadFile('/replacements/api/replacement-report/?' + params.toString(), names.docx);
+        await downloadFile('/replacements/api/replacement-report-extra/?' + params.toString(), names.summaryDocx);
+        await downloadFile('/replacements/api/replacement-report-extra-teacher/?' + params.toString(), names.teacherSummaryDocx);
+        if (window.AppUI && typeof window.AppUI.toast === 'function') {
+          window.AppUI.toast('Отчёты сформированы', 'success');
+        }
+      } catch (err) {
+        if (window.AppUI && typeof window.AppUI.toast === 'function') {
+          window.AppUI.toast(err.message || 'Ошибка', 'danger');
+        }
+      } finally {
+        reportBtn.disabled = false;
+      }
+    }
+
+    async function loadStats() {
+      loadBtn.disabled = true;
+      try {
+        const params = buildRangeParams();
+
+        const resp = await fetch('/replacements/api/stats/?' + params.toString(), { credentials: 'same-origin' });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error || 'Ошибка загрузки статистики');
+        }
+
+        rangeLabel.textContent = data.range && data.range.label ? data.range.label : 'Диапазон: -';
+        const regularLessons = (data.totals && data.totals.regular_replacements) || 0;
+        const extraLessons = (data.totals && data.totals.special_replacements) || 0;
+        const totalLessons = (data.totals && data.totals.replacement_lessons) || (regularLessons + extraLessons);
+        kpiLessons.textContent = extraLessons > 0
+          ? (regularLessons + ' обычных (вкл. отдельные), ' + extraLessons + ' по производственной необходимости')
+          : (regularLessons + ' обычных (вкл. отдельные)');
+        kpiLessons.title = 'Обычные (вкл. отдельные): ' + regularLessons + ', по производственной необходимости: ' + extraLessons + ', итого: ' + totalLessons;
+        kpiAbsent.textContent = (data.totals && data.totals.absent_teachers) || 0;
+        kpiReplacing.textContent = (data.totals && data.totals.replacement_teachers) || 0;
+
+        renderBars(topReplacing, data.top_replacing_teachers || [], 'Нет замещений за выбранный период');
+        renderBars(topAbsent, data.top_absent_teachers || [], 'Нет отсутствующих за выбранный период');
+        renderBars(allReplacing, data.all_replacing_teachers || [], 'Нет данных по замещающим за выбранный период');
+        renderDaily(data.daily || []);
+      } catch (err) {
+        if (window.AppUI && typeof window.AppUI.toast === 'function') {
+          window.AppUI.toast(err.message || 'Ошибка', 'danger');
+        }
+      } finally {
+        loadBtn.disabled = false;
+      }
+    }
+
+    modeDayBtn.addEventListener('click', function () { setMode('day'); loadStats(); });
+    modePeriodBtn.addEventListener('click', function () { setMode('period'); loadStats(); });
+    modeMonthBtn.addEventListener('click', function () { setMode('month'); loadStats(); });
+    loadBtn.addEventListener('click', loadStats);
+    reportBtn.addEventListener('click', downloadReports);
+
+    setMode('day');
+    loadStats();
+  })();
+</script>
+{% endblock %}
+

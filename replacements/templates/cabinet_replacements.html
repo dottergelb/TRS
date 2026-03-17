@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+
+{% block title %}Замена кабинета · ИС замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+    {# На этой странице мы не подключаем flatpickr или select2, поэтому внешний CSS не нужен #}
+{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Замена кабинета</h1>
+            <p class="page-subtitle">Выберите дату и кабинет, чтобы назначить замещающие кабинеты для уроков.</p>
+        </div>
+    </div>
+
+    <div class="card repl-toolbar">
+      <div class="card__body repl-toolbar__body">
+        <div class="repl-toolbar__left">
+          <div class="field" style="min-width:220px;">
+            <label class="label" for="datePicker">Дата</label>
+            <input type="date" id="datePicker" placeholder="Выберите дату">
+          </div>
+          <div class="field" style="min-width:220px;">
+            <label class="label" for="cabinetSelect">Кабинет</label>
+            <select id="cabinetSelect">
+              <option value="">Выберите кабинет...</option>
+            </select>
+          </div>
+        </div>
+        <div class="repl-toolbar__actions">
+          <button class="btn btn--primary" id="loadLessonsBtn" onclick="loadLessons()">📄 Показать уроки</button>
+          <button class="btn btn--secondary" id="saveButton" onclick="saveReplacements()">💾 Сохранить</button>
+          <button class="btn btn--ghost" onclick="exportDoc()">📥 Экспорт в DOCX</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="lessonsContainer" class="repl-teachers"></div>
+{% endblock %}
+
+{% block extra_js %}
+    {# Для страницы замены кабинетов не подключаем внешние JS-библиотеки (flatpickr, jQuery, select2, sweetalert2). #}
+    <script>
+        // Состояние страницы замены кабинетов
+        const state = {
+            selectedDate: null,
+            selectedDay: null,
+            selectedCabinet: null,
+            lessons: [],          // список уроков {id,start,end,class,subject,teacher,number}
+            replacements: {},     // {lessonId: {lessonId, replacementRoom, date, confirmed}}
+            clientConflicts: {},  // конфликты внутри страницы
+            serverConflicts: {},  // конфликты от сервера
+            conflictConfirm: {}   // подтверждения пользователем
+        };
+
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        // Инициализация списка всех кабинетов (distinct из расписания/замен)
+        async function loadCabinets() {
+            try {
+                const res = await fetch('/replacements/api/available-rooms/');
+                const data = await res.json();
+                const select = document.getElementById('cabinetSelect');
+                select.innerHTML = '<option value="">Выберите кабинет...</option>';
+                const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+                rooms.forEach(r => {
+                    const opt = new Option(r.value, r.value);
+                    select.appendChild(opt);
+                });
+                // Сохраняем выбор кабинета
+                select.addEventListener('change', function() {
+                    state.selectedCabinet = this.value || null;
+                });
+            } catch (e) {
+                console.warn('Не удалось загрузить список кабинетов:', e);
+            }
+        }
+
+        // Инициализация выбора даты через нативный input[type="date"]
+        function initDatePicker() {
+            const dp = document.getElementById('datePicker');
+            dp.addEventListener('change', function() {
+                const dateStr = this.value;
+                if (dateStr) {
+                    state.selectedDate = dateStr;
+                    const parts = dateStr.split('-').map(x => parseInt(x, 10));
+                    const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+                    const dayMap = ['вс','пн','вт','ср','чт','пт','сб'];
+                    state.selectedDay = dayMap[dt.getDay()].toLowerCase();
+                } else {
+                    state.selectedDate = null;
+                    state.selectedDay = null;
+                }
+            });
+        }
+
+        // Загрузка уроков после выбора даты и кабинета
+        async function loadLessons() {
+            if (!state.selectedDate) {
+                AppUI.toast('Выберите дату', 'warning');
+                return;
+            }
+            if (!state.selectedCabinet) {
+                AppUI.toast('Выберите кабинет', 'warning');
+                return;
+            }
+            try {
+                const url = `/replacements/api/cabinet-lessons/?date=${encodeURIComponent(state.selectedDate)}&cabinet=${encodeURIComponent(state.selectedCabinet)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                state.lessons = Array.isArray(data.lessons) ? data.lessons : [];
+                // Сброс предыдущих замен и конфликтов
+                state.replacements = {};
+                state.clientConflicts = {};
+                state.serverConflicts = {};
+                state.conflictConfirm = {};
+                renderLessons();
+            } catch (e) {
+                console.error('Ошибка загрузки уроков:', e);
+                AppUI.toast('Не удалось загрузить уроки', 'error');
+            }
+        }
+
+        // Рендер списка уроков и элементов выбора кабинета
+        function renderLessons() {
+            const container = document.getElementById('lessonsContainer');
+            if (!state.lessons || state.lessons.length === 0) {
+                container.innerHTML = '<p style="padding:8px;">Нет уроков в выбранном кабинете.</p>';
+                updateSaveButtonState();
+                return;
+            }
+            container.innerHTML = state.lessons.map(lesson => {
+                const repl = state.replacements[lesson.id] || {};
+                return `
+                    <div class="repl-lesson">
+                      <div class="repl-lesson__top">
+                        <p class="repl-lesson__title">Урок ${lesson.number || ''}</p>
+                        <span class="repl-lesson__time">${lesson.start}–${lesson.end}</span>
+                      </div>
+                      <p class="repl-lesson__meta">${lesson.subject} · ${lesson.class}</p>
+                      <p class="repl-lesson__meta">${lesson.teacher}</p>
+                      <select
+                        class="room-select"
+                        data-lesson-id="${lesson.id}"
+                        data-start="${lesson.start}"
+                        data-end="${lesson.end}"
+                        onchange="handleRoomSelect(${lesson.id}, this.value)"
+                      >
+                        <option value="">Кабинет...</option>
+                      </select>
+                      <div id="conflict-holder-${lesson.id}"></div>
+                    </div>
+                `;
+            }).join('');
+            // Для каждого урока загружаем доступные кабинеты
+            state.lessons.forEach(lesson => {
+                const select = container.querySelector(`.room-select[data-lesson-id="${lesson.id}"]`);
+                if (select) loadRoomOptions(lesson, select);
+            });
+            updateSaveButtonState();
+        }
+
+        // Получаем краткие данные для урока по id
+        function getLessonMetaById(id) {
+            const l = (state.lessons || []).find(it => it.id === id);
+            if (!l) return null;
+            return { id: l.id, start: l.start, end: l.end, class: l.class, number: l.number };
+        }
+
+        // Проверка пересечения временных интервалов
+        function overlapsTime(aStart, aEnd, bStart, bEnd) {
+            const toMin = (hhmm) => {
+                const parts = String(hhmm || '0:0').split(':');
+                const h = parseInt(parts[0], 10) || 0;
+                const m = parseInt(parts[1], 10) || 0;
+                return h * 60 + m;
+            };
+            const as = toMin(aStart), ae = toMin(aEnd), bs = toMin(bStart), be = toMin(bEnd);
+            return as < be && ae > bs;
+        }
+
+        // Получение объединенного списка конфликтов для урока
+        function getCombinedConflicts(lessonId) {
+            const s = state.serverConflicts[lessonId] || [];
+            const c = state.clientConflicts[lessonId] || [];
+            return [...s, ...c];
+        }
+
+        // Отрисовка блока предупреждений для урока
+        function renderConflictUIForLesson(lessonId) {
+            const holder = document.getElementById(`conflict-holder-${lessonId}`);
+            if (!holder) return;
+            const conflicts = getCombinedConflicts(lessonId);
+            if (!conflicts || conflicts.length === 0) {
+                holder.innerHTML = '';
+                delete state.conflictConfirm[lessonId];
+                updateSaveButtonState();
+                return;
+            }
+            const linesHtml = conflicts.map(c => {
+                const t = (c.start && c.end) ? `(${c.start}-${c.end})` : '';
+                const cls = c.class_group || c.class || '';
+                if (c.type === 'room_lesson') {
+                    return `<div class="conflict-line">⚠️ В это время ${t} этот кабинет занят уроком у ${cls} класса.</div>`;
+                }
+                if (c.type === 'room_replacement') {
+                    return `<div class="conflict-line">⚠️ В это время ${t} этот кабинет уже назначен на замещение у ${cls} класса.</div>`;
+                }
+                if (c.type === 'room_selected') {
+                    return `<div class="conflict-line">⚠️ В это время ${t} вы уже выбрали этот кабинет для замещения у ${cls} класса.</div>`;
+                }
+                return `<div class="conflict-line">⚠️ Конфликт</div>`;
+            }).join('');
+            holder.innerHTML = `
+              <div class="conflict-box">
+                ${linesHtml}
+              </div>
+            `;
+            updateSaveButtonState();
+        }
+
+        function toggleConflictConfirm(lessonId, checked) {
+            state.conflictConfirm[lessonId] = !!checked;
+            updateSaveButtonState();
+        }
+
+        // Обновление состояния кнопки сохранения
+        function updateSaveButtonState() {
+            const btn = document.getElementById('saveButton');
+            if (!btn) return;
+            btn.disabled = false;
+            btn.title = '';
+        }
+
+        // Загрузка доступных комнат для урока
+        async function loadRoomOptions(lesson, selectElement) {
+            if (!selectElement) return;
+            if (!state.selectedDate || !state.selectedDay) {
+                selectElement.innerHTML = '<option value="">Кабинет...</option>';
+                return;
+            }
+            try {
+                const url = `/replacements/api/available-rooms/?lesson_id=${lesson.id}` +
+                    `&date=${encodeURIComponent(state.selectedDate)}` +
+                    `&day=${encodeURIComponent(state.selectedDay)}` +
+                    `&start=${encodeURIComponent(lesson.start)}` +
+                    `&end=${encodeURIComponent(lesson.end)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                selectElement.innerHTML = '<option value="">Кабинет...</option>';
+                const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+                rooms.forEach(r => {
+                    const name = r.value;
+                    const status = r.status || '';
+                    const text = status ? `${name} (${status})` : `${name}`;
+                    const opt = new Option(text, name);
+                    opt.disabled = false;
+                    selectElement.appendChild(opt);
+                });
+                // Если уже выбран кабинет в заменах — добавить в список, если он отсутствует
+                const repl = state.replacements[lesson.id];
+                if (repl && repl.replacementRoom) {
+                    const selected = repl.replacementRoom;
+                    const exists = rooms.find(r => r.value === selected);
+                    if (!exists) {
+                        const opt2 = new Option(`${selected} (занят)`, selected);
+                        opt2.disabled = false;
+                        selectElement.appendChild(opt2);
+                    }
+                    selectElement.value = selected;
+                }
+            } catch (e) {
+                console.error('Ошибка загрузки кабинетов:', e);
+            }
+        }
+
+        // Получение конфликтов по кабинету с сервера
+        async function fetchRoomServerConflicts(lessonId, room) {
+            const meta = getLessonMetaById(lessonId);
+            if (!room || !meta || !state.selectedDate || !state.selectedDay) {
+                if (state.serverConflicts[lessonId]) {
+                    const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+                    if (remain.length > 0) {
+                        state.serverConflicts[lessonId] = remain;
+                    } else {
+                        delete state.serverConflicts[lessonId];
+                    }
+                }
+                renderConflictUIForLesson(lessonId);
+                return;
+            }
+            try {
+                const url = `/replacements/api/room-conflicts/?classroom=${encodeURIComponent(room)}` +
+                    `&date=${encodeURIComponent(state.selectedDate)}` +
+                    `&day=${encodeURIComponent(state.selectedDay)}` +
+                    `&start=${encodeURIComponent(meta.start)}` +
+                    `&end=${encodeURIComponent(meta.end)}` +
+                    `&lesson_id=${encodeURIComponent(lessonId)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
+                const roomConfs = conflicts.map(c => Object.assign({}, c, { _source: 'room' }));
+                let existing = state.serverConflicts[lessonId] || [];
+                existing = existing.filter(c => c._source !== 'room');
+                const merged = existing.concat(roomConfs);
+                if (merged.length > 0) {
+                    state.serverConflicts[lessonId] = merged;
+                    if (state.conflictConfirm[lessonId] !== true) {
+                        state.conflictConfirm[lessonId] = false;
+                    }
+                } else {
+                    delete state.serverConflicts[lessonId];
+                }
+                renderConflictUIForLesson(lessonId);
+            } catch (e) {
+                console.warn('Не удалось получить конфликты по кабинету с сервера', e);
+                if (state.serverConflicts[lessonId]) {
+                    const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+                    if (remain.length > 0) {
+                        state.serverConflicts[lessonId] = remain;
+                    } else {
+                        delete state.serverConflicts[lessonId];
+                    }
+                }
+                renderConflictUIForLesson(lessonId);
+            }
+        }
+
+        // Пересчёт локальных конфликтов (внутри страницы) для выбранного кабинета
+        function recomputeClientRoomConflicts(room) {
+            if (!room) return;
+            const lessonIds = Object.values(state.replacements || {})
+                .filter(r => r.date === state.selectedDate && r.replacementRoom === room)
+                .map(r => r.lessonId);
+            lessonIds.forEach(lid => {
+                if (state.clientConflicts[lid]) {
+                    state.clientConflicts[lid] = state.clientConflicts[lid].filter(c => c._source !== 'room');
+                    if (state.clientConflicts[lid].length === 0) {
+                        delete state.clientConflicts[lid];
+                    }
+                }
+            });
+            for (let i = 0; i < lessonIds.length; i++) {
+                const aId = lessonIds[i];
+                const a = getLessonMetaById(aId);
+                if (!a) continue;
+                for (let j = i + 1; j < lessonIds.length; j++) {
+                    const bId = lessonIds[j];
+                    const b = getLessonMetaById(bId);
+                    if (!b) continue;
+                    if (overlapsTime(a.start, a.end, b.start, b.end) && !(a.number === b.number && a.class === b.class)) {
+                        if (!state.clientConflicts[aId]) state.clientConflicts[aId] = [];
+                        if (!state.clientConflicts[bId]) state.clientConflicts[bId] = [];
+                        state.clientConflicts[aId].push({ type: 'room_selected', start: b.start, end: b.end, class: b.class, lesson_number: b.number, _source: 'room' });
+                        state.clientConflicts[bId].push({ type: 'room_selected', start: a.start, end: a.end, class: a.class, lesson_number: a.number, _source: 'room' });
+                        if (state.conflictConfirm[aId] !== true) state.conflictConfirm[aId] = false;
+                        if (state.conflictConfirm[bId] !== true) state.conflictConfirm[bId] = false;
+                    }
+                }
+            }
+            lessonIds.forEach(lid => {
+                renderConflictUIForLesson(lid);
+            });
+            updateSaveButtonState();
+        }
+
+        // Обработчик выбора кабинета
+        async function handleRoomSelect(lessonId, roomValue) {
+            const prevRepl = state.replacements[lessonId];
+            const prevRoom = prevRepl ? prevRepl.replacementRoom : '';
+            if (!roomValue) {
+                if (prevRepl) {
+                    delete prevRepl.replacementRoom;
+                    if (!prevRepl.lessonId) {
+                        delete state.replacements[lessonId];
+                    }
+                }
+                if (state.serverConflicts[lessonId]) {
+                    const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
+                    if (remain.length > 0) {
+                        state.serverConflicts[lessonId] = remain;
+                    } else {
+                        delete state.serverConflicts[lessonId];
+                    }
+                }
+                if (state.clientConflicts[lessonId]) {
+                    state.clientConflicts[lessonId] = state.clientConflicts[lessonId].filter(c => c._source !== 'room');
+                    if (state.clientConflicts[lessonId].length === 0) {
+                        delete state.clientConflicts[lessonId];
+                    }
+                }
+                delete state.conflictConfirm[lessonId];
+                if (prevRoom) recomputeClientRoomConflicts(prevRoom);
+                renderConflictUIForLesson(lessonId);
+                updateSaveButtonState();
+                return;
+            }
+            let repl = state.replacements[lessonId];
+            if (!repl) {
+                repl = { lessonId: lessonId, replacementRoom: roomValue, date: state.selectedDate };
+                state.replacements[lessonId] = repl;
+            } else {
+                repl.replacementRoom = roomValue;
+            }
+            await fetchRoomServerConflicts(lessonId, roomValue);
+            recomputeClientRoomConflicts(roomValue);
+            if (prevRoom && prevRoom !== roomValue) {
+                recomputeClientRoomConflicts(prevRoom);
+            }
+            updateSaveButtonState();
+        }
+
+        // Сохранение замен
+        async function saveReplacements() {
+            const items = [];
+            Object.values(state.replacements || {}).forEach(r => {
+                if (!r.replacementRoom) return;
+                items.push({
+                    lesson_id: r.lessonId,
+                    date: state.selectedDate,
+                    classroom: r.replacementRoom,
+                    confirmed: true
+                });
+            });
+            if (items.length === 0) {
+                AppUI.toast('Нет изменённых кабинетов', 'info');
+                return;
+            }
+            try {
+                const res = await fetch('/replacements/api/save-cabinet-replacements/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ replacements: items })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    AppUI.toast(data.error || 'Ошибка сохранения', 'error');
+                    return;
+                }
+                AppUI.toast('Замены кабинетов сохранены', 'success');
+                // После сохранения заново подгружаем уроки, чтобы получить актуальные конфликты
+                await loadLessons();
+            } catch (e) {
+                console.error('Ошибка сохранения замен:', e);
+                AppUI.toast('Ошибка сохранения', 'error');
+            }
+        }
+
+        // Экспорт отчёта
+        function exportDoc() {
+            if (!state.selectedDate) {
+                AppUI.toast('Выберите дату', 'warning');
+                return;
+            }
+            if (!state.selectedCabinet) {
+                AppUI.toast('Выберите кабинет', 'warning');
+                return;
+            }
+            const url = `/replacements/api/export-cabinet-docx/?date=${encodeURIComponent(state.selectedDate)}&cabinet=${encodeURIComponent(state.selectedCabinet)}`;
+            window.location.href = url;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCabinets();
+            initDatePicker();
+        });
+    </script>
+{% endblock %}

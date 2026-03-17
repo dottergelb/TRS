@@ -1,0 +1,139 @@
+﻿{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}ИС замещений{% endblock %}</title>
+
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="icon" type="image/png" href="{% static 'img/icona.png' %}">
+  <link rel="icon" type="image/png" sizes="64x64" href="{% static 'img/favicon-64.png' %}">
+  <link rel="icon" type="image/png" sizes="128x128" href="{% static 'img/favicon-128.png' %}">
+  <link rel="icon" type="image/png" sizes="256x256" href="{% static 'img/favicon-256.png' %}">
+  <link rel="icon" type="image/png" sizes="512x512" href="{% static 'img/favicon-512.png' %}">
+  <link rel="icon" type="image/svg+xml" href="{% static 'img/icona.svg' %}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'img/apple-touch-icon.png' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="{% if user.is_authenticated %}has-top-nav {% endif %}{% block body_class %}{% endblock %}">
+
+  {% block header %}
+    {% if user.is_authenticated %}
+      <header class="top-nav" role="banner">
+        <div class="nav-inner">
+          <div class="nav-brand-wrap">
+            <a class="nav-brand" href="/replacements/">
+              <span class="nav-logo">🏫</span>
+              <span class="nav-title">ИС замещений</span>
+            </a>
+            <button
+              type="button"
+              id="sidebarToggle"
+              class="icon-btn nav-sidebar-toggle"
+              aria-label="Открыть меню"
+              aria-expanded="false"
+              aria-controls="appSidebar"
+            >▸</button>
+          </div>
+
+          <div class="nav-actions">
+            <div class="nav-user" title="Текущий пользователь">
+              <span class="nav-user__icon">👋</span>
+              <span class="nav-user__name">{{ user.full_name|default:user.username }}</span>
+            </div>
+            <a class="btn btn--ghost btn--sm" href="/logout/">Выйти</a>
+          </div>
+        </div>
+      </header>
+
+      <div id="sidebarBackdrop" class="app-sidebar-backdrop"></div>
+      <aside id="appSidebar" class="app-sidebar" aria-label="Основное меню">
+        <div class="app-sidebar__header">
+          <span class="app-sidebar__title">Меню</span>
+          <button type="button" id="sidebarClose" class="icon-btn" aria-label="Закрыть меню">✕</button>
+        </div>
+        <nav class="app-sidebar__nav">
+          {% if user.is_superuser or user.can_calendar %}
+            <a class="app-sidebar__link" href="/replacements/calendar/">Календарь</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_calendar or user.can_logs %}
+            <a class="app-sidebar__link" href="/replacements/stats/">Статистика</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_calendar or user.can_calls %}
+            <a class="app-sidebar__link" href="/replacements/cabinets/">Кабинеты</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_teachers %}
+            <a class="app-sidebar__link" href="/replacements/specializations/">Учителя</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_upload %}
+            <a class="app-sidebar__link" href="/upload/">Загрузка</a>
+            <a class="app-sidebar__link" href="/upload/schedule/">Расписание</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_logs %}
+            <a class="app-sidebar__link" href="/replacements/logs/">Логи</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_calls %}
+            <a class="app-sidebar__link" href="/schedule/">Звонки</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_users %}
+            <a class="app-sidebar__link" href="{% url 'accounts:user_list' %}">Пользователи</a>
+          {% endif %}
+        </nav>
+      </aside>
+    {% endif %}
+  {% endblock %}
+
+  <main class="container {% block container_class %}{% endblock %}" role="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="app-footer">
+    <div class="app-footer__inner">© 2025 Все права защищены</div>
+  </footer>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-relevant="additions"></div>
+  {% if messages %}
+    <div class="js-toast-seed" hidden>
+      {% for message in messages %}
+        <div class="js-toast" data-level="{{ message.tags|default:'info' }}" data-message="{{ message|escapejs }}"></div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <script src="{% static 'js/ui.js' %}"></script>
+  <script>
+    (function () {
+      const topNav = document.querySelector('.top-nav');
+      const applyTopOffset = () => {
+        if (!topNav) return;
+        const h = topNav.offsetHeight || 60;
+        document.documentElement.style.setProperty('--top-nav-height', h + 'px');
+      };
+      applyTopOffset();
+      window.addEventListener('resize', applyTopOffset);
+
+      const body = document.body;
+      const toggle = document.getElementById('sidebarToggle');
+      const closeBtn = document.getElementById('sidebarClose');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      const links = document.querySelectorAll('.app-sidebar__link');
+      if (!toggle || !backdrop) return;
+
+      const setOpen = (open) => {
+        body.classList.toggle('sidebar-open', !!open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+
+      toggle.addEventListener('click', () => setOpen(!body.classList.contains('sidebar-open')));
+      if (closeBtn) closeBtn.addEventListener('click', () => setOpen(false));
+      backdrop.addEventListener('click', () => setOpen(false));
+      links.forEach((l) => l.addEventListener('click', () => setOpen(false)));
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setOpen(false);
+      });
+    })();
+  </script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

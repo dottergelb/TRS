@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Вход · ИС замещений{% endblock %}
+{% block body_class %}auth{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+  <div class="auth-shell">
+    <div class="card auth-card">
+      <div class="card__body">
+        <div class="stack" style="gap: 6px;">
+          <h1 class="card__title" style="font-size: 20px;">Вход</h1>
+          <p class="menu-card__desc" style="margin: 0;">
+            Информационная система подбора учителей при замещении уроков в общеобразовательной организации
+          </p>
+        </div>
+        <form method="post" class="stack">
+          {% csrf_token %}
+          {{ form.as_p }}
+          <button class="btn btn--primary" type="submit">Войти</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+  <style>
+    body.auth .container { padding: 0; }
+    body.auth .app-footer { display: none; }
+    form p { margin: 0; }
+    form label { display: block; font-weight: 800; font-size: 13px; margin: 10px 0 6px; color: rgba(15, 23, 42, 0.85); }
+    form input { width: 100%; }
+    .helptext { display: block; color: rgba(15, 23, 42, 0.55); font-size: 12px; margin-top: 4px; }
+    ul.errorlist { margin: 8px 0 0; padding-left: 18px; color: var(--danger); font-weight: 700; }
+  </style>
+{% endblock %}
