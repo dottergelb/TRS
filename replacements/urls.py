@@ -44,6 +44,7 @@ urlpatterns = [
     path('api/replacement-report/', views.replacement_summary_report, name='replacement_report'),
     path('api/replacement-report-extra/', views.replacement_daily_summary_docx, name='replacement_report_extra'),
     path('api/replacement-report-extra-teacher/', views.replacement_teacher_summary_docx, name='replacement_report_extra_teacher'),
+    path('api/import-docx/', views.import_replacements_docx, name='import_replacements_docx'),
     path('api/stats/', views.replacement_statistics_api, name='statistics_api'),
     path('api/backend-health/', views.backend_health_api, name='backend_health'),
     path('schedule/', views.class_schedule_view, name='class_schedule'),

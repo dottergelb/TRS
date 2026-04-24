@@ -44,8 +44,10 @@
           <button class="btn btn--secondary" onclick="clearAll()">❌ Очистить все</button>
           <button class="btn btn--primary" onclick="addAnotherTeacher()">➕ Добавить учителя</button>
           <button class="btn btn--secondary" onclick="openSpecialReplacementModal()">➕ Добавить урок</button>
+          <button class="btn btn--secondary" onclick="triggerDocxImport()">📤 Импорт DOCX</button>
           <button class="btn btn--primary" id="saveButton" onclick="saveReplacements()">💾 Сохранить все</button>
           <button class="btn btn--ghost" onclick="exportToDoc()">📥 Экспорт в DOCX</button>
+          <input type="file" id="docxImportInput" accept=".docx" style="display:none">
         </div>
       </div>
     </div>
@@ -143,6 +145,59 @@
                 if (datePickerFp) datePickerFp.redraw();
             }
             return data;
+        }
+
+        function triggerDocxImport() {
+            if (!state.selectedDate) {
+                AppUI.toast('Сначала выберите дату в календаре.', 'warning');
+                return;
+            }
+            const input = document.getElementById('docxImportInput');
+            if (!input) return;
+            input.value = '';
+            input.click();
+        }
+
+        async function importReplacementsDocx(file) {
+            if (!file) return;
+            if (!state.selectedDate) {
+                AppUI.toast('Сначала выберите дату в календаре.', 'warning');
+                return;
+            }
+
+            const payload = new FormData();
+            payload.append('file', file);
+            payload.append('date', state.selectedDate);
+            payload.append('replace_all', '1');
+
+            try {
+                const res = await fetch('/replacements/api/import-docx/', {
+                    method: 'POST',
+                    body: payload
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data?.error || 'Ошибка импорта');
+                }
+
+                await fetchSavedReplacements();
+                await ensureVacancyTeachersForSelectedDate();
+                if (state.selectedDate) {
+                    markedDates.add(state.selectedDate);
+                    if (datePickerFp) datePickerFp.redraw();
+                }
+
+                const unresolved = Number(data?.unresolved_count || 0);
+                const created = Number(data?.created || 0);
+                if (unresolved > 0) {
+                    AppUI.toast(`Импорт выполнен: добавлено ${created}, не сопоставлено ${unresolved}.`, 'warning');
+                } else {
+                    AppUI.toast(`Импорт выполнен: добавлено ${created}.`, 'success');
+                }
+            } catch (err) {
+                console.error('Ошибка импорта DOCX:', err);
+                AppUI.toast(`Импорт не выполнен: ${err.message || err}`, 'danger');
+            }
         }
 
 
@@ -250,6 +305,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const dp = document.getElementById('datePicker');
     if (!dp) return;
     renderSpecialReplacements();
+    const importInput = document.getElementById('docxImportInput');
+    if (importInput) {
+        importInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            await importReplacementsDocx(file);
+        });
+    }
 
     // Restore удобный календарь (flatpickr). Если CDN недоступен — останется ручной ввод.
     // Важно: НЕ вешаем дополнительный dp.change, если есть flatpickr — иначе onDateSelected может сработать дважды.

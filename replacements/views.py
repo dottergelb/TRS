@@ -631,6 +631,306 @@ def calendar_view(request):
     return render(request, 'calendar.html', {'day': day})
 
 
+def _norm_name_key(value: str) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", "", (value or "").casefold(), flags=re.IGNORECASE)
+
+
+def _norm_text_key(value: str) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", "", (value or "").casefold(), flags=re.IGNORECASE)
+
+
+def _is_generic_vacancy_label(value: str | None) -> bool:
+    v = " ".join((value or "").split()).strip()
+    if not v:
+        return False
+    key = _norm_text_key(v)
+    return key in {"вакансия", "vacancy"}
+
+
+def _subject_matches(subject_from_docx: str, lesson_subject: str) -> bool:
+    docx_key = _norm_text_key(subject_from_docx)
+    lesson_key = _norm_text_key(lesson_subject)
+    if not docx_key or not lesson_key:
+        return False
+    if docx_key == lesson_key:
+        return True
+
+    aliases = {
+        "англязык": "английскийязык",
+        "англ": "английскийязык",
+        "матпракт": "математическийпрактикум",
+        "читгр": "читательскаяграмотность",
+        "ров": "разговорыоважном",
+    }
+    docx_norm = aliases.get(docx_key, docx_key)
+    lesson_norm = aliases.get(lesson_key, lesson_key)
+    return (
+        docx_norm == lesson_norm
+        or docx_norm in lesson_norm
+        or lesson_norm in docx_norm
+    )
+
+
+def _parse_docx_rows(uploaded_file) -> list[dict]:
+    doc = Document(uploaded_file)
+    rows = []
+
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [" ".join((c.text or "").split()) for c in row.cells]
+            if len(cells) < 6:
+                # Таблицы замены кабинетов имеют 5 колонок — их здесь не импортируем.
+                continue
+
+            c0 = (cells[0] or "").strip().casefold()
+            if "номер" in c0 and "урок" in c0:
+                continue
+            if "смена" in c0:
+                continue
+
+            try:
+                lesson_number = int(float((cells[0] or "").replace(",", ".")))
+            except Exception:
+                continue
+
+            class_group = (cells[1] or "").strip()
+            classroom = (cells[2] or "").strip()
+            subject_name = (cells[3] or "").strip()
+            original_teacher = (cells[4] or "").strip()
+            replacement_teacher = (cells[5] or "").strip()
+
+            if not (class_group and replacement_teacher):
+                continue
+
+            rows.append(
+                {
+                    "lesson_number": lesson_number,
+                    "class_group": class_group,
+                    "class_key": _norm_text_key(class_group),
+                    "classroom": classroom,
+                    "subject_name": subject_name,
+                    "original_teacher": original_teacher,
+                    "replacement_teacher": replacement_teacher,
+                }
+            )
+    return rows
+
+
+def _pick_best_lesson_for_docx_row(day_lessons: list[Lesson], row: dict) -> Lesson | None:
+    row_class_key = row.get("class_key") or ""
+    row_number = int(row.get("lesson_number") or 0)
+    row_original_name = (row.get("original_teacher") or "").strip()
+    row_subject = (row.get("subject_name") or "").strip()
+    row_room = (row.get("classroom") or "").strip()
+
+    initial = [
+        l for l in day_lessons
+        if _norm_text_key(l.class_group or "") == row_class_key and int(l.lesson_number or 0) == row_number
+    ]
+    if not initial:
+        return None
+    if len(initial) == 1:
+        return initial[0]
+
+    row_original_key = _norm_name_key(row_original_name)
+    row_original_is_generic_vacancy = _is_generic_vacancy_label(row_original_name)
+    row_room_key = _norm_text_key(row_room)
+    best = None
+    best_score = -1
+    for lesson in initial:
+        score = 0
+        lesson_teacher_name = lesson.teacher.full_name if lesson.teacher else ""
+        if row_original_key and _norm_name_key((lesson.teacher.full_name if lesson.teacher else "")) == row_original_key:
+            score += 5
+        if row_original_is_generic_vacancy and _is_vacancy_teacher_name(lesson_teacher_name):
+            score += 5
+        if row_subject and lesson.subject and _subject_matches(row_subject, lesson.subject.name):
+            score += 3
+        if row_room_key and _norm_text_key(lesson.classroom or "") == row_room_key:
+            score += 1
+        if score > best_score:
+            best_score = score
+            best = lesson
+
+    if best_score <= 0:
+        return None
+    return best
+
+
+def _get_or_create_teacher_by_name(raw_name: str, teacher_by_key: dict[str, list[Teacher]]) -> Teacher:
+    full_name = " ".join((raw_name or "").split()).strip()
+    if not full_name:
+        raise ValueError("Пустое имя учителя")
+
+    key = _norm_name_key(full_name)
+    candidates = teacher_by_key.get(key, [])
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        for t in candidates:
+            if (t.full_name or "").casefold() == full_name.casefold():
+                return t
+        return candidates[0]
+
+    t = Teacher.objects.create(full_name=full_name, specialization="", hours_per_week=0)
+    teacher_by_key.setdefault(key, []).append(t)
+    return t
+
+
+@login_required
+@csrf_exempt
+def import_replacements_docx(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Метод не поддерживается"}, status=405)
+
+    if not (request.user.is_superuser or getattr(request.user, "can_calendar", False)):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+
+    uploaded_file = request.FILES.get("file")
+    date_str = (request.POST.get("date") or "").strip()
+    replace_all = str(request.POST.get("replace_all", "1")).strip().lower() in {"1", "true", "yes", "y"}
+
+    if not uploaded_file:
+        return JsonResponse({"error": "Файл не передан"}, status=400)
+    if not date_str:
+        return JsonResponse({"error": "Параметр date обязателен"}, status=400)
+    if not uploaded_file.name.lower().endswith(".docx"):
+        return JsonResponse({"error": "Поддерживаются только .docx файлы"}, status=400)
+
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:
+        return JsonResponse({"error": "Некорректная дата. Ожидается YYYY-MM-DD"}, status=400)
+
+    try:
+        parsed_rows = _parse_docx_rows(uploaded_file)
+    except Exception as exc:
+        return JsonResponse({"error": f"Не удалось прочитать DOCX: {exc}"}, status=400)
+
+    if not parsed_rows:
+        return JsonResponse({"error": "В файле не найдены строки замещений"}, status=400)
+
+    day_code = day_short_from_date(target_date)
+    day_lessons = list(
+        _active_lessons()
+        .filter(day_of_week=day_code)
+        .select_related("teacher", "subject")
+    )
+
+    all_teachers = list(Teacher.objects.all())
+    teacher_by_key: dict[str, list[Teacher]] = {}
+    for t in all_teachers:
+        teacher_by_key.setdefault(_norm_name_key(t.full_name or ""), []).append(t)
+
+    to_create_by_lesson: dict[int, dict] = {}
+    unresolved = []
+    same_teacher_skipped = 0
+
+    for idx, row in enumerate(parsed_rows, start=1):
+        lesson = _pick_best_lesson_for_docx_row(day_lessons, row)
+        if not lesson:
+            unresolved.append(
+                {
+                    "row": idx,
+                    "class_group": row.get("class_group"),
+                    "lesson_number": row.get("lesson_number"),
+                    "original_teacher": row.get("original_teacher"),
+                    "replacement_teacher": row.get("replacement_teacher"),
+                }
+            )
+            continue
+
+        try:
+            original_name_from_docx = row.get("original_teacher") or ""
+            # DOCX often contains just "Вакансия", while in DB vacancy teachers are named by subject
+            # (e.g. "Вакансия Информатика"). In that case keep the teacher from matched lesson.
+            if _is_generic_vacancy_label(original_name_from_docx) and lesson.teacher and _is_vacancy_teacher_name(lesson.teacher.full_name):
+                original_teacher = lesson.teacher
+            else:
+                original_teacher = _get_or_create_teacher_by_name(
+                    original_name_from_docx or (lesson.teacher.full_name if lesson.teacher else ""),
+                    teacher_by_key,
+                )
+            replacement_teacher = _get_or_create_teacher_by_name(
+                row.get("replacement_teacher") or "",
+                teacher_by_key,
+            )
+        except Exception:
+            unresolved.append(
+                {
+                    "row": idx,
+                    "class_group": row.get("class_group"),
+                    "lesson_number": row.get("lesson_number"),
+                    "error": "Не удалось сопоставить учителя",
+                }
+            )
+            continue
+
+        if replacement_teacher.id == original_teacher.id:
+            same_teacher_skipped += 1
+            continue
+
+        replacement_room = None
+        docx_room = (row.get("classroom") or "").strip()
+        if docx_room and _norm_text_key(docx_room) != _norm_text_key(lesson.classroom or ""):
+            replacement_room = docx_room
+
+        to_create_by_lesson[lesson.id] = {
+            "lesson": lesson,
+            "original_teacher": original_teacher,
+            "replacement_teacher": replacement_teacher,
+            "replacement_classroom": replacement_room,
+        }
+
+    if not to_create_by_lesson:
+        return JsonResponse(
+            {
+                "error": "Не удалось сопоставить ни одной строки с расписанием",
+                "unresolved": unresolved[:50],
+            },
+            status=400,
+        )
+
+    with transaction.atomic():
+        if replace_all:
+            _teacher_replacements().filter(date=target_date).delete()
+
+        created_count = 0
+        for payload in to_create_by_lesson.values():
+            Replacement.objects.create(
+                lesson=payload["lesson"],
+                date=target_date,
+                original_teacher=payload["original_teacher"],
+                replacement_teacher=payload["replacement_teacher"],
+                confirmed=True,
+                production_necessity=False,
+                ignore_in_reports=False,
+                replacement_classroom=payload["replacement_classroom"],
+            )
+            created_count += 1
+
+    log_activity(request, "replacements_import_docx", {
+        "date": target_date.strftime("%Y-%m-%d"),
+        "file_name": uploaded_file.name,
+        "parsed_rows": len(parsed_rows),
+        "created": created_count,
+        "unresolved": len(unresolved),
+        "replace_all": replace_all,
+    })
+
+    return JsonResponse(
+        {
+            "status": "success",
+            "date": target_date.strftime("%Y-%m-%d"),
+            "parsed_rows": len(parsed_rows),
+            "created": created_count,
+            "skipped_same_teacher": same_teacher_skipped,
+            "unresolved_count": len(unresolved),
+            "unresolved": unresolved[:30],
+        }
+    )
+
+
 @login_required
 def activity_logs_view(request):
     """Admin/staff-only audit log viewer."""
