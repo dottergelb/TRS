@@ -1,4 +1,4 @@
-# accounts/urls.py
+                  
 from django.urls import path
 from .views import (
     login_view,
@@ -9,14 +9,14 @@ from .views import (
     user_delete_view,
 )
 
-# Простое пространство имён для реверса URL-ов (accounts:...)
+                                                             
 app_name = 'accounts'
 
 urlpatterns = [
     path('login/', login_view, name='login'),
     path('register/', register_view, name='register'),
     path('logout/', logout_view, name='logout'),
-    # Страница управления пользователями
+                                        
     path('users/', user_list_view, name='user_list'),
     path('users/<int:user_id>/edit/', user_edit_view, name='user_edit'),
     path('users/<int:user_id>/delete/', user_delete_view, name='user_delete'),

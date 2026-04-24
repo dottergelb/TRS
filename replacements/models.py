@@ -66,13 +66,13 @@ class Replacement(models.Model):
     lesson = models.ForeignKey('Lesson', on_delete=models.CASCADE)
     date = models.DateField()
     confirmed = models.BooleanField(default=False)
-    # Замещение по производственной необходимости (выносится в отдельный лист при экспорте).
+                                                                                            
     production_necessity = models.BooleanField(default=False)
-    # Не учитывать в отчётах/статистике (дистант и т.п.).
+                                                         
     ignore_in_reports = models.BooleanField(default=False, verbose_name="Не учитывать в замещениях")
 
-    # Новый атрибут: кабинет, на который производится замещение. Если None — кабинет не изменяется.
-    # При заполнении этого поля проверяется, свободен ли выбранный кабинет в это время.
+                                                                                                   
+                                                                                       
     replacement_classroom = models.CharField(
         max_length=50,
         blank=True,

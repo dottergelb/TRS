@@ -38,12 +38,10 @@
     }, timeoutMs);
   }
 
-  // Expose a tiny public API for templates that want to use it
   window.AppUI = window.AppUI || {};
   window.AppUI.toast = toast;
 
   document.addEventListener('DOMContentLoaded', () => {
-    // Convert Django messages (seeded in base.html) into toasts
     const seed = document.querySelector('.js-toast-seed');
     if (seed) {
       seed.querySelectorAll('.js-toast').forEach((n) => {

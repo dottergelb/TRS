@@ -22,13 +22,13 @@ urlpatterns = [
     path('api/reassign-teacher-lessons/', views.reassign_teacher_lessons, name='reassign_teacher_lessons'),
     path('api/teacher-conflicts/', views.teacher_conflicts_api, name='teacher_conflicts'),
     path('api/replacements/', views.get_saved_replacements, name='get_replacements'),
-    # "Специализация" теперь разделена на две страницы:
-    # 1) /specializations/            -> "Учителя" (обзор)
-    # 2) /specializations/editor/     -> "Редактор" (таблица флажков)
+                                                       
+                                                          
+                                                                     
     path('specializations/', views.teachers_overview_view, name='teachers_overview'),
     path('specializations/editor/', views.specializations_view, name='specializations_editor'),
     path('api/update-specialization/', views.update_specialization, name='update_specialization'),
-    # Teacher management (used on the "Редактор" page)
+                                                      
     path('api/teachers/add/', views.add_teacher_api, name='add_teacher'),
     path('api/teachers/<int:teacher_id>/delete/', views.delete_teacher_api, name='delete_teacher'),
     path('api/lessons/<int:lesson_id>/', views.get_lessons_by_id, name='lesson-by-id'),
@@ -38,7 +38,7 @@ urlpatterns = [
     path('api/special-time/', views.special_replacement_time, name='special_time'),
     path('api/check-replacements/', views.check_replacements_for_date, name='check_replacements'),
     path('api/delete-replacements/', views.delete_replacements_for_date, name='delete_replacements'),
-    # Dates with existing replacements (for highlighting in the date picker)
+                                                                            
     path('api/replacement-dates/', views.replacement_dates_for_month, name='replacement_dates'),
     path('api/teacher-hours/<int:teacher_id>/', views.teacher_hours, name='teacher_hours'),
     path('api/replacement-report/', views.replacement_summary_report, name='replacement_report'),
@@ -51,14 +51,14 @@ urlpatterns = [
     path("upload/", views.upload, name="upload"),
     path("api/upload-schedule/", views.upload_schedule_api, name="upload_schedule_api"),
 
-    # ----- Cabinet replacement routes -----
-    # Страница для замены кабинетов и связанные API
+                                            
+                                                   
     path('cabinets/', views.cabinet_replacement_view, name='cabinets'),
     path('api/cabinet-lessons/', views.cabinet_lessons, name='cabinet_lessons'),
     path('api/save-cabinet-replacements/', views.save_cabinet_replacements, name='save_cabinet_replacements'),
     path('api/export-cabinet-docx/', views.export_cabinet_docx, name='export_cabinet_docx'),
 
-    # Кабинеты
+              
     path('api/available-rooms/', views.available_rooms, name='available_rooms'),
     path('api/room-conflicts/', views.room_conflicts_api, name='room_conflicts'),
 

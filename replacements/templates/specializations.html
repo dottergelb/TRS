@@ -96,12 +96,12 @@ th {
     background: rgba(0,0,0,0.06);
 }
 
-/* modal styles are in app.css */
+
 
 </style>
 
 
-<!-- Add teacher modal -->
+
 <div id="addTeacherModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Добавить учителя">
   <div class="modal-card">
     <div class="modal-title">Добавить учителя</div>
@@ -152,7 +152,6 @@ th {
 <script>
     const CSRF_TOKEN = '{{ csrf_token }}';
 
-    // --- Add teacher modal ---
     const addBtn = document.getElementById('addTeacherBtn');
     const modal = document.getElementById('addTeacherModal');
     const inp = document.getElementById('teacherFullNameInput');
@@ -199,7 +198,6 @@ th {
                 return;
             }
             closeModal();
-            // Reload to rebuild wide table properly
             location.reload();
         } catch (e) {
             console.error(e);
@@ -207,7 +205,6 @@ th {
         }
     });
 
-    // --- Delete teacher ---
     document.querySelectorAll('.delete-teacher-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -238,7 +235,6 @@ th {
     });
 
     document.querySelectorAll('.specialization-checkbox').forEach(checkbox => {
-    // Обработка смены состояния чекбокса (сохранение)
     checkbox.addEventListener('change', async function () {
         const teacherId = this.dataset.teacherId;
         const subjectId = this.dataset.subjectId;
@@ -268,7 +264,6 @@ th {
         }
     });
 
-    // Подсветка строки и столбца при наведении
     checkbox.addEventListener('mouseenter', function () {
         const cell = this.closest('td');
         const row = cell.closest('tr');

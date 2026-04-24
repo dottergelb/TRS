@@ -8,7 +8,7 @@ from replacements.views import upload, clear_schedule, upload_schedule_view
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', login_view, name='root-login'),
-    path('', include('accounts.urls')),  # теперь всё будет прямо в корне: /register/, /login/
+    path('', include('accounts.urls')),                                                       
     path('replacements/', include('replacements.urls')),
 path('schedule/', class_schedule_view, name='class_schedule'),
 path("upload/", upload, name="upload"),

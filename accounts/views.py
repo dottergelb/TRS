@@ -89,6 +89,6 @@ def login_view(request):
 
 def logout_view(request):
     logout(request)
-    # When using namespaced URL patterns, specify the namespace for login
-    # Redirect to the login page within the accounts namespace
+                                                                         
+                                                              
     return redirect('accounts:login')

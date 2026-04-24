@@ -19,8 +19,8 @@ class UserUpdateForm(forms.ModelForm):
     Если поле «Пароль» оставить пустым, текущий пароль останется без изменений.
     """
 
-    # Поле ввода нового пароля. Оно не связано напрямую с полем модели
-    # `password`, поэтому значения не присваиваются автоматически при сохранении.
+                                                                      
+                                                                                 
     password = forms.CharField(
         label="Пароль",
         widget=forms.PasswordInput,
@@ -30,8 +30,8 @@ class UserUpdateForm(forms.ModelForm):
 
     class Meta:
         model = CustomUser
-        # Исключаем поле password из Meta.fields, чтобы избежать его перезаписи
-        # сырым значением. Все флажки доступа и ФИО обновятся напрямую.
+                                                                               
+                                                                       
         fields = [
             'full_name',
             'can_calendar',
@@ -54,10 +54,10 @@ class UserUpdateForm(forms.ModelForm):
         }
 
     def save(self, commit=True):
-        # Сохраняем модель без коммита, чтобы можно было изменить пароль позже
+                                                                              
         user = super().save(commit=False)
         pwd = self.cleaned_data.get('password')
-        # Если введён новый пароль — хэшируем его
+                                                 
         if pwd:
             user.set_password(pwd)
         if commit:

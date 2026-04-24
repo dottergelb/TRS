@@ -4,7 +4,7 @@
 {% block container_class %}container--wide{% endblock %}
 
 {% block extra_head %}
-    {# На этой странице мы не подключаем flatpickr или select2, поэтому внешний CSS не нужен #}
+    
 {% endblock %}
 
 {% block content %}
@@ -41,9 +41,8 @@
 {% endblock %}
 
 {% block extra_js %}
-    {# Для страницы замены кабинетов не подключаем внешние JS-библиотеки (flatpickr, jQuery, select2, sweetalert2). #}
+    
     <script>
-        // Состояние страницы замены кабинетов
         const state = {
             selectedDate: null,
             selectedDay: null,
@@ -57,7 +56,6 @@
 
         function pad2(n) { return String(n).padStart(2, '0'); }
 
-        // Инициализация списка всех кабинетов (distinct из расписания/замен)
         async function loadCabinets() {
             try {
                 const res = await fetch('/replacements/api/available-rooms/');
@@ -69,7 +67,6 @@
                     const opt = new Option(r.value, r.value);
                     select.appendChild(opt);
                 });
-                // Сохраняем выбор кабинета
                 select.addEventListener('change', function() {
                     state.selectedCabinet = this.value || null;
                 });
@@ -78,7 +75,6 @@
             }
         }
 
-        // Инициализация выбора даты через нативный input[type="date"]
         function initDatePicker() {
             const dp = document.getElementById('datePicker');
             dp.addEventListener('change', function() {
@@ -96,7 +92,6 @@
             });
         }
 
-        // Загрузка уроков после выбора даты и кабинета
         async function loadLessons() {
             if (!state.selectedDate) {
                 AppUI.toast('Выберите дату', 'warning');
@@ -111,7 +106,6 @@
                 const res = await fetch(url);
                 const data = await res.json();
                 state.lessons = Array.isArray(data.lessons) ? data.lessons : [];
-                // Сброс предыдущих замен и конфликтов
                 state.replacements = {};
                 state.clientConflicts = {};
                 state.serverConflicts = {};
@@ -123,7 +117,6 @@
             }
         }
 
-        // Рендер списка уроков и элементов выбора кабинета
         function renderLessons() {
             const container = document.getElementById('lessonsContainer');
             if (!state.lessons || state.lessons.length === 0) {
@@ -154,7 +147,6 @@
                     </div>
                 `;
             }).join('');
-            // Для каждого урока загружаем доступные кабинеты
             state.lessons.forEach(lesson => {
                 const select = container.querySelector(`.room-select[data-lesson-id="${lesson.id}"]`);
                 if (select) loadRoomOptions(lesson, select);
@@ -162,14 +154,12 @@
             updateSaveButtonState();
         }
 
-        // Получаем краткие данные для урока по id
         function getLessonMetaById(id) {
             const l = (state.lessons || []).find(it => it.id === id);
             if (!l) return null;
             return { id: l.id, start: l.start, end: l.end, class: l.class, number: l.number };
         }
 
-        // Проверка пересечения временных интервалов
         function overlapsTime(aStart, aEnd, bStart, bEnd) {
             const toMin = (hhmm) => {
                 const parts = String(hhmm || '0:0').split(':');
@@ -181,14 +171,12 @@
             return as < be && ae > bs;
         }
 
-        // Получение объединенного списка конфликтов для урока
         function getCombinedConflicts(lessonId) {
             const s = state.serverConflicts[lessonId] || [];
             const c = state.clientConflicts[lessonId] || [];
             return [...s, ...c];
         }
 
-        // Отрисовка блока предупреждений для урока
         function renderConflictUIForLesson(lessonId) {
             const holder = document.getElementById(`conflict-holder-${lessonId}`);
             if (!holder) return;
@@ -226,7 +214,6 @@
             updateSaveButtonState();
         }
 
-        // Обновление состояния кнопки сохранения
         function updateSaveButtonState() {
             const btn = document.getElementById('saveButton');
             if (!btn) return;
@@ -234,7 +221,6 @@
             btn.title = '';
         }
 
-        // Загрузка доступных комнат для урока
         async function loadRoomOptions(lesson, selectElement) {
             if (!selectElement) return;
             if (!state.selectedDate || !state.selectedDay) {
@@ -259,7 +245,6 @@
                     opt.disabled = false;
                     selectElement.appendChild(opt);
                 });
-                // Если уже выбран кабинет в заменах — добавить в список, если он отсутствует
                 const repl = state.replacements[lesson.id];
                 if (repl && repl.replacementRoom) {
                     const selected = repl.replacementRoom;
@@ -276,7 +261,6 @@
             }
         }
 
-        // Получение конфликтов по кабинету с сервера
         async function fetchRoomServerConflicts(lessonId, room) {
             const meta = getLessonMetaById(lessonId);
             if (!room || !meta || !state.selectedDate || !state.selectedDay) {
@@ -328,7 +312,6 @@
             }
         }
 
-        // Пересчёт локальных конфликтов (внутри страницы) для выбранного кабинета
         function recomputeClientRoomConflicts(room) {
             if (!room) return;
             const lessonIds = Object.values(state.replacements || {})
@@ -366,7 +349,6 @@
             updateSaveButtonState();
         }
 
-        // Обработчик выбора кабинета
         async function handleRoomSelect(lessonId, roomValue) {
             const prevRepl = state.replacements[lessonId];
             const prevRoom = prevRepl ? prevRepl.replacementRoom : '';
@@ -412,7 +394,6 @@
             updateSaveButtonState();
         }
 
-        // Сохранение замен
         async function saveReplacements() {
             const items = [];
             Object.values(state.replacements || {}).forEach(r => {
@@ -440,7 +421,6 @@
                     return;
                 }
                 AppUI.toast('Замены кабинетов сохранены', 'success');
-                // После сохранения заново подгружаем уроки, чтобы получить актуальные конфликты
                 await loadLessons();
             } catch (e) {
                 console.error('Ошибка сохранения замен:', e);
@@ -448,7 +428,6 @@
             }
         }
 
-        // Экспорт отчёта
         function exportDoc() {
             if (!state.selectedDate) {
                 AppUI.toast('Выберите дату', 'warning');

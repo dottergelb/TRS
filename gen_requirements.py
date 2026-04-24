@@ -10,7 +10,7 @@ EXCLUDE_DIRS = {
     "static", "media", "migrations"
 }
 
-# Частые соответствия "импорт-модуль" -> "pip-пакет"
+                                                    
 MODULE_TO_DIST = {
     "rest_framework": "djangorestframework",
     "corsheaders": "django-cors-headers",

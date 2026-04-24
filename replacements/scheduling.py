@@ -47,12 +47,12 @@ def overlaps(a_start: time, a_end: time, b_start: time, b_end: time) -> bool:
     return a_start < b_end and a_end > b_start
 
 
-# --- Shift rules (school-specific) ---
-# Primary school (1–4) is treated as 1st shift.
-# For 5–11 the school uses a fixed mapping by grade:
-#   6/7/8  -> 2nd shift
-#   5/9/10/11 -> 1st shift
-# If a grade is unknown (or outside 1..11), caller should fall back to time-based inference.
+                                       
+                                               
+                                                    
+                       
+                          
+                                                                                            
 SECOND_SHIFT_GRADES = {6, 7, 8}
 FIRST_SHIFT_GRADES_SECONDARY = {5, 9, 10, 11}
 

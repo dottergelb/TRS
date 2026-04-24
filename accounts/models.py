@@ -4,8 +4,8 @@ from django.db import models
 class CustomUser(AbstractUser):
     full_name = models.CharField(max_length=255)
 
-    # Права доступа к разделам системы (назначаются суперпользователем).
-    # По умолчанию обычный пользователь не имеет доступа ни к одному разделу.
+                                                                        
+                                                                             
     can_calendar = models.BooleanField(default=False, verbose_name="Доступ к календарю")
     can_teachers = models.BooleanField(default=False, verbose_name="Доступ к разделу «Учителя»")
     can_editor = models.BooleanField(default=False, verbose_name="Доступ к разделу «Редактор»")

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 def _get_client_ip(request: HttpRequest) -> str:
     xff = request.META.get("HTTP_X_FORWARDED_FOR")
     if xff:
-        # can be comma-separated list
+                                     
         return xff.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR", "") or ""
 

@@ -1,4 +1,3 @@
-// Автоматическая загрузка предложений при открытии страницы
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.replacement-block').forEach(block => {
         const lessonId = block.dataset.lessonId;
@@ -8,7 +7,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Запрос предложений
 function fetchSuggestions(lessonId, day, subject) {
     console.log(`fetchSuggestions called with ${lessonId}, ${day}, ${subject}`);
 
@@ -22,7 +20,6 @@ function fetchSuggestions(lessonId, day, subject) {
                 const teacher = data.teachers[0];
                 teacherSpan.textContent = teacher.name;
 
-                // Заполняем селект
                 select.innerHTML = "";
                 data.teachers.forEach(t => {
                     const option = document.createElement("option");
@@ -51,7 +48,6 @@ function populateCustomSelect(lessonId, teachers) {
     select.closest('.custom-selection').style.display = 'block';
 }
 
-// Сохранение замены
 function saveReplacement(lessonId) {
     const teacherId = document.querySelector(`#select_${lessonId}`).value;
     fetch('/replacements/api/save_replacement/', {
@@ -61,7 +57,6 @@ function saveReplacement(lessonId) {
     }).then(response => alert('Сохранено!'));
 }
 
-// Добавление нового учителя для замены
 function addAnotherTeacher() {
     window.location.href = '/replacements/';
 }

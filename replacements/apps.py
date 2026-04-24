@@ -6,5 +6,5 @@ class ReplacementsConfig(AppConfig):
     name = "replacements"
 
     def ready(self):
-        # noqa: F401
-        from . import signals  # ensures auth login/logout auditing is wired
+                    
+        from . import signals                                               

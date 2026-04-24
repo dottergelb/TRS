@@ -108,14 +108,14 @@ def _gs_save_lessons_from_parsed(parsed_data: list[dict]) -> tuple[int, int]:
     subject_rows = store.get_table_dicts("replacements_subject")
     lesson_rows = store.get_table_dicts("replacements_lesson")
 
-    # Deactivate currently active lessons (history-safe behavior, same as SQLite path).
+                                                                                       
     deactivated = 0
     for l in lesson_rows:
         if as_bool(l.get("is_active")):
             l["is_active"] = 0
             deactivated += 1
 
-    # Ensure subjects/teachers exist and keep lookups in sync.
+                                                              
     subject_by_name = {
         str(s.get("name") or "").strip(): as_int(s.get("id_subject"))
         for s in subject_rows
@@ -127,7 +127,7 @@ def _gs_save_lessons_from_parsed(parsed_data: list[dict]) -> tuple[int, int]:
         if str(t.get("full_name") or "").strip() and as_int(t.get("teacher_id")) is not None
     }
 
-    # Precompute subject sets per teacher to update specialization.
+                                                                   
     subjects_by_teacher: dict[str, set[str]] = {}
     for item in parsed_data:
         t_name = str(item.get("teacher") or "").strip()
@@ -153,7 +153,7 @@ def _gs_save_lessons_from_parsed(parsed_data: list[dict]) -> tuple[int, int]:
             })
             teacher_by_name[teacher_name] = new_tid
 
-    # Update specialization from parsed subjects.
+                                                 
     for t in teacher_rows:
         t_name = str(t.get("full_name") or "").strip()
         parsed_subjects = subjects_by_teacher.get(t_name, set())
@@ -319,23 +319,23 @@ def available_rooms(request):
                 result.append({'value': room, 'status': 'Занят' if busy else 'Свободен'})
             return JsonResponse({'rooms': result})
 
-        # Собираем список всех кабинетов из расписания и сохранённых замен
+                                                                          
         rooms_set = set()
         for r in Lesson.objects.exclude(classroom__isnull=True).exclude(classroom='').values_list('classroom', flat=True).distinct():
             rooms_set.add(str(r))
         for r in Replacement.objects.exclude(replacement_classroom__isnull=True).exclude(replacement_classroom='').values_list('replacement_classroom', flat=True).distinct():
             rooms_set.add(str(r))
 
-        # Сортируем для стабильного вывода
+                                          
         rooms = sorted(rooms_set)
 
-        # Если не переданы параметры времени или даты – возвращаем просто список кабинетов
+                                                                                          
         if not (date_str and day and start_str and end_str and lesson_id):
             return JsonResponse({
                 'rooms': [{'value': room, 'status': ''} for room in rooms]
             })
 
-        # Попытка распарсить дату и время
+                                         
         try:
             selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             start_t = datetime.strptime(start_str, "%H:%M").time()
@@ -343,7 +343,7 @@ def available_rooms(request):
         except Exception:
             return JsonResponse({'rooms': [{'value': room, 'status': ''} for room in rooms]})
 
-        # Определяем исходный урок (для параллельных групп)
+                                                           
         try:
             lesson_obj = Lesson.objects.filter(id=int(lesson_id)).first()
         except Exception:
@@ -361,7 +361,7 @@ def available_rooms(request):
         for room in rooms:
             busy = False
 
-            # Проверяем активные уроки в расписании
+                                                   
             for l in _active_lessons().filter(
                 classroom=room,
                 day_of_week=day,
@@ -377,7 +377,7 @@ def available_rooms(request):
                 result.append({'value': room, 'status': 'Занят'})
                 continue
 
-            # Проверяем сохранённые замены на эту дату
+                                                      
             for repl in Replacement.objects.filter(
                 date=selected_date,
                 replacement_classroom=room
@@ -405,7 +405,7 @@ def available_rooms(request):
         return JsonResponse({'rooms': result})
 
     except Exception as e:
-        # В случае ошибки возвращаем пустой список
+                                                  
         return JsonResponse({'rooms': [], 'error': str(e)}, status=200)
 
 
@@ -422,7 +422,7 @@ def room_conflicts_api(request):
     end_str = request.GET.get('end')
     lesson_id = request.GET.get('lesson_id')
 
-    # Недостаточно данных – нет конфликтов
+                                          
     if not (classroom and date_str and day and start_str and end_str):
         return JsonResponse({'conflicts': []})
 
@@ -495,7 +495,7 @@ def room_conflicts_api(request):
 
         return JsonResponse({'conflicts': conflicts, 'busy': len(conflicts) > 0})
 
-    # Определяем целевой урок для параллельных групп
+                                                    
     try:
         target_lesson = Lesson.objects.filter(id=int(lesson_id)).first() if lesson_id else None
     except Exception:
@@ -511,14 +511,14 @@ def room_conflicts_api(request):
 
     conflicts = []
 
-    # 1) Конфликты с уроками в расписании
+                                         
     for l in _active_lessons().filter(
         classroom=classroom,
         day_of_week=day,
         start_time__lt=end_t,
         end_time__gt=start_t
     ).values('start_time', 'end_time', 'class_group', 'lesson_number', 'id'):
-        # Пропускаем свой же урок
+                                 
         if target_lesson and l.get('id') == target_lesson.id:
             continue
         if not is_parallel_allowed(l):
@@ -530,7 +530,7 @@ def room_conflicts_api(request):
                 'lesson_number': l.get('lesson_number'),
             })
 
-    # 2) Конфликты с уже сохранёнными замещениями
+                                                 
     for repl in Replacement.objects.filter(
         date=selected_date,
         replacement_classroom=classroom
@@ -581,7 +581,7 @@ def _effective_times_for_lesson(class_group: str, lesson_number: int, shift: int
 
     Always returns a tuple (start_time, end_time).
     """
-    # Basic fallbacks
+                     
     if not shift or not class_group or not lesson_number:
         return fallback_start, fallback_end
 
@@ -591,17 +591,17 @@ def _effective_times_for_lesson(class_group: str, lesson_number: int, shift: int
 
     try:
         rows = ClassSchedule.objects.filter(lesson_number=lesson_number, shift=int(shift))
-        # Exact match first
+                           
         cls_norm = (class_group or '').strip().lower()
         for r in rows:
             if (r.class_group or '').strip().lower() == cls_norm:
                 return (r.start_time or fallback_start, r.end_time or fallback_end)
-        # Then grade match
+                          
         for r in rows:
             if extract_grade(r.class_group) == grade:
                 return (r.start_time or fallback_start, r.end_time or fallback_end)
     except Exception:
-        # Any unexpected issues -> fallback
+                                           
         pass
 
     return fallback_start, fallback_end
@@ -624,7 +624,7 @@ def _cabinet_replacements():
 
 @login_required
 def calendar_view(request):
-    # Доступ к календарю разрешён только при наличии соответствующего права
+                                                                           
     if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
     day = request.GET.get('day', 'пн')
@@ -679,7 +679,7 @@ def _parse_docx_rows(uploaded_file) -> list[dict]:
         for row in table.rows:
             cells = [" ".join((c.text or "").split()) for c in row.cells]
             if len(cells) < 6:
-                # Таблицы замены кабинетов имеют 5 колонок — их здесь не импортируем.
+                                                                                     
                 continue
 
             c0 = (cells[0] or "").strip().casefold()
@@ -842,8 +842,8 @@ def import_replacements_docx(request):
 
         try:
             original_name_from_docx = row.get("original_teacher") or ""
-            # DOCX often contains just "Вакансия", while in DB vacancy teachers are named by subject
-            # (e.g. "Вакансия Информатика"). In that case keep the teacher from matched lesson.
+                                                                                                    
+                                                                                               
             if _is_generic_vacancy_label(original_name_from_docx) and lesson.teacher and _is_vacancy_teacher_name(lesson.teacher.full_name):
                 original_teacher = lesson.teacher
             else:
@@ -934,7 +934,7 @@ def import_replacements_docx(request):
 @login_required
 def activity_logs_view(request):
     """Admin/staff-only audit log viewer."""
-    # Право на просмотр логов даётся суперпользователю, staff или пользователю с can_logs
+                                                                                         
     if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'can_logs', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -1342,12 +1342,12 @@ def save_replacements(request):
                 })
                 return JsonResponse({"status": "success"})
 
-            # ✅ Prefetch lessons used in payload
+                                                
             lesson_ids = [i.get('lesson_id') for i in items if i.get('lesson_id')]
             lessons = Lesson.objects.select_related('teacher').filter(id__in=lesson_ids)
             lesson_map = {l.id: l for l in lessons}
 
-            # --- Кэш профиля учителей (1–4 / 5–11) для строгого запрета пересечения ---
+                                                                                        
             replacement_ids = []
             for i in items:
                 try:
@@ -1374,7 +1374,7 @@ def save_replacements(request):
                     return "5-11"
                 return "1-11"
 
-            # Кэш "есть ли у учителя уроки в эту смену в этот день недели"
+                                                                          
             from django.db.models import Max, Min
             shift1_max_end = ClassSchedule.objects.filter(shift=1).aggregate(mx=Max("end_time"))["mx"]
             shift2_min_start = ClassSchedule.objects.filter(shift=2).aggregate(mn=Min("start_time"))["mn"]
@@ -1423,17 +1423,17 @@ def save_replacements(request):
                 vacancy_cache[teacher_id] = val
                 return val
 
-            # We validate time overlaps for replacement teachers:
-            # - their own scheduled lessons (except 'parallel group' same class+lesson_number)
-            # - their other replacements on that date
-            # - overlaps within the same payload
-            payload_busy = {}  # {teacher_id: [(start,end,class,number,lesson_id,confirmed)]}
-            # Для кабинетов храним занятость в этой загрузке, чтобы обнаруживать накладки внутри текущего запроса.
-            payload_busy_rooms: dict[str, list[tuple]] = {}  # {room: [(start,end,class,number,lesson_id,confirmed)]}
+                                                                 
+                                                                                              
+                                                     
+                                                
+            payload_busy = {}                                                                
+                                                                                                                  
+            payload_busy_rooms: dict[str, list[tuple]] = {}                                                          
 
             with transaction.atomic():
-                # Если на дату уже были замены и пользователь решил "перезаписать",
-                # удаляем существующие В ТРАНЗАКЦИИ — при любой ошибке всё откатится.
+                                                                                   
+                                                                                     
                 if replace_all:
                     date_set = sorted({i.get('date') for i in items if i.get('date')})
                     if special_date:
@@ -1475,7 +1475,7 @@ def save_replacements(request):
                     replacement_id = int(replacement_id)
                     original_id = int(original_id)
 
-                    # Кабинет, выбранный для замещения (может быть отсутствовать или пустым)
+                                                                                            
                     replacement_room = (item.get('classroom') or item.get('room') or '').strip() or None
 
                     if _replacement_is_vacancy(replacement_id):
@@ -1487,7 +1487,7 @@ def save_replacements(request):
                         return JsonResponse({
                             "error": "Нельзя поставить учителя на замещение самого себя."
                         }, status=400)
-                    # --- 0) Ступень: 1–4 и 5–11 можно пересекать только с подтверждением ---
+                                                                                             
                     lesson_grade = extract_grade(lesson.class_group)
                     lvl = teacher_level_payload(replacement_id)
                     cross_level = False
@@ -1501,7 +1501,7 @@ def save_replacements(request):
                             "error": "Требуется подтверждение: учитель другой ступени."
                         }, status=400)
 
-                    # --- 0.1) Если в этот день у учителя нет уроков в целевой смене — требуем подтверждение ---
+                                                                                                                
                     target_shift = _effective_shift_for_class(lesson.class_group, getattr(lesson, 'shift', None))
                     if target_shift not in (1, 2):
                         try:
@@ -1518,7 +1518,7 @@ def save_replacements(request):
                             }, status=400)
 
 
-                    # --- 1) Conflicts with scheduled lessons (except parallel group same class+number)
+                                                                                                       
                     scheduled_conflict = _active_lessons().filter(
                         teacher_id=replacement_id,
                         day_of_week=lesson.day_of_week,
@@ -1539,7 +1539,7 @@ def save_replacements(request):
                                 )
                             }, status=400)
 
-                    # --- 2) Conflicts with existing replacements on that date
+                                                                              
                     existing_repls = _teacher_replacements().filter(
                         date=selected_date,
                         replacement_teacher_id=replacement_id,
@@ -1550,7 +1550,7 @@ def save_replacements(request):
                         if not l2:
                             continue
                         if overlaps(lesson.start_time, lesson.end_time, l2.start_time, l2.end_time):
-                            # parallel group (same class+lesson_number) is allowed
+                                                                                  
                             if (l2.class_group == lesson.class_group and l2.lesson_number == lesson.lesson_number):
                                 continue
                             if not confirmed:
@@ -1561,7 +1561,7 @@ def save_replacements(request):
                                     )
                                 }, status=400)
 
-                    # --- 3) Conflicts inside this payload
+                                                          
                     busy_list = payload_busy.setdefault(replacement_id, [])
                     for (s, e, cls, num, other_lid, other_confirmed) in busy_list:
                         if overlaps(lesson.start_time, lesson.end_time, s, e):
@@ -1576,9 +1576,9 @@ def save_replacements(request):
                                 }, status=400)
                     busy_list.append((lesson.start_time, lesson.end_time, lesson.class_group, lesson.lesson_number, lesson.id, confirmed))
 
-                    # --- Кабинеты: проверяем занятость кабинета (замещения кабинетов) ---
+                                                                                          
                     if replacement_room:
-                        # 1) Проверка расписания: этот кабинет занят уроком в основной таблице
+                                                                                              
                         room_sched_conflict = _active_lessons().filter(
                             classroom=replacement_room,
                             day_of_week=lesson.day_of_week,
@@ -1594,7 +1594,7 @@ def save_replacements(request):
                                 )
                             }, status=400)
 
-                        # 2) Проверка существующих замен на эту дату (кабинет уже используется на эту дату)
+                                                                                                           
                         existing_room_repls = Replacement.objects.filter(
                             date=selected_date,
                             replacement_classroom=replacement_room,
@@ -1604,7 +1604,7 @@ def save_replacements(request):
                             if not l2:
                                 continue
                             if overlaps(lesson.start_time, lesson.end_time, l2.start_time, l2.end_time):
-                                # если пересекаются по времени (параллельные группы или нет), требуем подтверждение
+                                                                                                                   
                                 if not confirmed:
                                     return JsonResponse({
                                         "error": (
@@ -1613,11 +1613,11 @@ def save_replacements(request):
                                         )
                                     }, status=400)
 
-                        # 3) Проверка накладок внутри текущего запроса (payload)
+                                                                                
                         busy_rooms = payload_busy_rooms.setdefault(replacement_room, [])
                         for (s, e, cls, num, other_lid, other_confirmed) in busy_rooms:
                             if overlaps(lesson.start_time, lesson.end_time, s, e):
-                                # если параллельная группа (та же пара и класс), разрешаем без подтверждения
+                                                                                                            
                                 if (cls == lesson.class_group and num == lesson.lesson_number):
                                     continue
                                 if not (confirmed and other_confirmed):
@@ -1629,7 +1629,7 @@ def save_replacements(request):
                                     }, status=400)
                         busy_rooms.append((lesson.start_time, lesson.end_time, lesson.class_group, lesson.lesson_number, lesson.id, confirmed))
 
-                    # --- Save / update
+                                       
                     defaults = {
                         'original_teacher_id': original_id,
                         'replacement_teacher_id': replacement_id,
@@ -1637,8 +1637,8 @@ def save_replacements(request):
                         'production_necessity': production_necessity,
                         'ignore_in_reports': ignore_in_reports,
                     }
-                    # Если присутствует ключ 'classroom' или 'room' в item, то обновляем replacement_classroom;
-                    # иначе сохраняем существующее значение (чтобы замена учителя не перезаписывала замещённый кабинет).
+                                                                                                               
+                                                                                                                        
                     if ('classroom' in item or 'room' in item):
                         defaults['replacement_classroom'] = replacement_room
                     Replacement.objects.update_or_create(
@@ -1647,7 +1647,7 @@ def save_replacements(request):
                         defaults=defaults
                     )
 
-                # Отдельные замещения (не привязаны к уроку)
+                                                            
                 if special_items is not None:
                     if not special_date:
                         return JsonResponse({"error": "special_replacements_date обязателен"}, status=400)
@@ -2011,7 +2011,7 @@ def get_suggestions(request):
         if not subject_id:
             return JsonResponse({"error": "Предмет не найден"}, status=400)
 
-        # Определим границы недели + правильный день недели из даты
+                                                                   
         selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         day = day_short_from_date(selected_date)
         start_of_week = selected_date - timedelta(days=selected_date.weekday())
@@ -2019,7 +2019,7 @@ def get_suggestions(request):
 
         lesson_grade = extract_grade(lesson.class_group)
 
-        # Учителя по специализации
+                                  
         specialized_teachers = Teacher.objects.filter(
             Q(specialization__contains=f",{subject_id},") |
             Q(specialization__startswith=f"{subject_id},") |
@@ -2031,7 +2031,7 @@ def get_suggestions(request):
             | Q(full_name__icontains="vakans")
         )
 
-        # Свободные по расписанию (кроме "второй группы" — её добавляем отдельно)
+                                                                                 
         free_teachers = Teacher.objects.exclude(
             Q(lesson__is_active=True)
             & Q(lesson__day_of_week=day)
@@ -2043,19 +2043,19 @@ def get_suggestions(request):
             | Q(full_name__icontains="vakans")
         ).distinct()
 
-        # Исключаем отсутствующих в этот день
+                                             
         absent_teacher_ids = _teacher_replacements().filter(
             date=selected_date
         ).values_list('original_teacher_id', flat=True)
 
-        # Кандидаты (IDs)
+                         
         candidate_ids = list(
             free_teachers.exclude(id__in=absent_teacher_ids).values_list("id", flat=True)
         )
 
         candidate_ids = list(set(candidate_ids))
 
-        # Финальный список кандидатов с признаком специализации
+                                                               
         replacements = Teacher.objects.filter(id__in=candidate_ids).annotate(
             is_specialized=Case(
                 When(id__in=specialized_teachers.values_list('id', flat=True), then=Value(True)),
@@ -2064,7 +2064,7 @@ def get_suggestions(request):
             )
         )
 
-        # --- Профиль учителя по классам (1–4 / 5–11) ---
+                                                         
         grade_map: dict[int, set[int]] = {}
         for t_id, cls in _active_lessons().filter(teacher_id__in=candidate_ids).values_list("teacher_id", "class_group"):
             g = extract_grade(cls)
@@ -2082,16 +2082,16 @@ def get_suggestions(request):
                 return "5-11"
             return "1-11"
 
-        # --- Смены (школьное правило по классам + уточнение по конкретному дню) ---
-        # Требование:
-        #   6/7/8  -> 2 смена
-        #   5/9/10/11 -> 1 смена
-        # Автоподбор НЕ должен ставить учителя на другую смену, если в ЭТОТ ДЕНЬ
-        # он ведёт уроки только в одной смене. Если в этот день он ведёт и в 1-й, и во 2-й — можно в обе.
-        # При этом, если в конкретный день у учителя вообще нет уроков, используем его «общий профиль» по 5–11.
+                                                                                    
+                     
+                             
+                                
+                                                                                
+                                                                                                         
+                                                                                                               
         from django.db.models import Max, Min
 
-        # Fallback: если класс/grade не распознан, определяем смену по времени (строго по звонкам)
+                                                                                                  
         shift1_max_end = ClassSchedule.objects.filter(shift=1).aggregate(mx=Max("end_time"))["mx"]
         shift2_min_start = ClassSchedule.objects.filter(shift=2).aggregate(mn=Min("start_time"))["mn"]
 
@@ -2113,27 +2113,27 @@ def get_suggestions(request):
                 return 2
             return 1
 
-        # Целевая смена урока, на который ищем замену
+                                                     
         target_shift = infer_shift_by_grade(lesson_grade)
         if target_shift is None:
             target_shift = int(infer_shift_by_time(lesson.start_time))
 
-        # Общий профиль учителя по 5–11 (если учитель ведёт только 6/7/8 -> 2 смена,
-        # только 5/9/10/11 -> 1 смена, иначе обе)
+                                                                                    
+                                                 
         def teacher_base_shifts(t_id: int) -> set[int]:
             grades = grade_map.get(t_id) or set()
             sec = {g for g in grades if g is not None and g >= 5}
             if not sec:
-                # только 1–4 (или пусто)
+                                        
                 return {1}
             if sec.issubset(SECOND_SHIFT_GRADES):
                 return {2}
             if sec.issubset(FIRST_SHIFT_GRADES_SECONDARY):
                 return {1}
-            # смешанные 5–11 или «нестандартные» -> обе
+                                                       
             return {1, 2}
 
-        # Профиль по конкретному дню: по тем классам, которые реально стоят у учителя в этот день
+                                                                                                 
         day_shift_map: dict[int, set[int]] = {}
         for t_id, cls, st in _active_lessons().filter(
             teacher_id__in=candidate_ids,
@@ -2145,7 +2145,7 @@ def get_suggestions(request):
                 sh = int(infer_shift_by_time(st))
             day_shift_map.setdefault(t_id, set()).add(int(sh))
 
-        # --- Конфликты по уже сохранённым заменам на дату ---
+                                                              
         repl_time_map: dict[int, list[tuple]] = {}
         existing_repls = (
             _teacher_replacements().filter(date=selected_date, replacement_teacher_id__in=candidate_ids)
@@ -2158,7 +2158,7 @@ def get_suggestions(request):
                 (r.lesson.start_time, r.lesson.end_time, r.lesson.class_group, r.lesson.lesson_number)
             )
 
-        # --- Часы (уроки + замены за неделю) ---
+                                                 
         base_hours_map = dict(
             _active_lessons().filter(teacher_id__in=candidate_ids)
             .values("teacher_id")
@@ -2172,10 +2172,10 @@ def get_suggestions(request):
             .values_list("replacement_teacher_id", "c")
         )
 
-        # Список результатов
+                            
         suggestions = []
 
-        # 🟨 Проверка на вторую группу
+                                     
         parallel_lessons = _active_lessons().filter(
             class_group=lesson.class_group,
             lesson_number=lesson.lesson_number,
@@ -2191,7 +2191,7 @@ def get_suggestions(request):
                     date__range=(start_of_week, end_of_week)
                 ).count()
 
-                # Conflict only with OTHER replacements at overlapping time (not the same class+lesson_number)
+                                                                                                              
                 conflict = False
                 for r in _teacher_replacements().filter(
                     date=selected_date,
@@ -2213,15 +2213,15 @@ def get_suggestions(request):
                     "hours": base_hours + replacement_hours,
                     "auto_allowed": True,
                     "grade_ok": True,
-                    "shift_ok": True,  # for "Вторая группа" обычно та же смена
+                    "shift_ok": True,                                          
                     "no_lessons_shift": False,
                     "conflict": conflict,
                 })
 
-        # 🧠 Остальные кандидаты
+                               
         for t in replacements:
             if any(s["id"] == t.id for s in suggestions):
-                continue  # уже добавлен как "вторая группа"
+                continue                                    
 
             level = teacher_level(t.id)
             lesson_is_primary = lesson_grade is not None and lesson_grade <= 4
@@ -2236,15 +2236,15 @@ def get_suggestions(request):
             teacher_shifts = teacher_day_shifts if teacher_day_shifts else teacher_base_shifts(t.id)
             shift_ok = bool(teacher_shifts) and (int(target_shift) in set(map(int, teacher_shifts)))
 
-            # Если у учителя в этот день нет уроков в целевой смене — не ставим автоматически,
-            # но разрешаем выбрать вручную с подтверждением.
+                                                                                              
+                                                            
             no_lessons_shift = int(target_shift) not in set(map(int, teacher_day_shifts or []))
 
-            # Конфликт по уже назначенным заменам на эту дату
+                                                             
             conflict = False
             for (s, e, cls, num) in repl_time_map.get(t.id, []):
                 if overlaps(lesson.start_time, lesson.end_time, s, e):
-                    # Разрешаем только «вторую группу» (тот же класс+номер урока)
+                                                                                 
                     if not (cls == lesson.class_group and num == lesson.lesson_number):
                         conflict = True
                         break
@@ -2259,7 +2259,7 @@ def get_suggestions(request):
             suggestions.append({
                 "id": t.id,
                 "name": t.full_name,
-                # По расписанию эти кандидаты свободны; если есть конфликт по уже назначенным заменам — считаем занятым.
+                                                                                                                        
                 "status": "Урок" if conflict else "Свободен",
                 "compatibility": compatibility,
                 "hours": base_hours + replacement_hours,
@@ -2273,9 +2273,9 @@ def get_suggestions(request):
                 "teacher_day_shifts": sorted(list(teacher_day_shifts)) if teacher_day_shifts else [],
             })
 
-        # 📊 Сортировка по приоритету
+                                    
         compatibility_order = {"Вторая группа": 0, "Специализация": 1, "Свободен": 2}
-        # Сначала — приоритет совместимости, затем — auto_allowed (True выше), затем — имя.
+                                                                                           
         suggestions.sort(
             key=lambda s: (
                 compatibility_order.get(s["compatibility"], 99),
@@ -2382,7 +2382,7 @@ def export_to_docx(request):
     log_activity(request, "export_replacements_docx", {"date": date, "count": replacements.count()})
     return response
 
-# ---------- Cabinet replacements --------------
+                                                
 
 @login_required
 def cabinet_replacement_view(request):
@@ -2585,14 +2585,14 @@ def save_cabinet_replacements(request):
                 if not lesson:
                     return JsonResponse({"error": f"Урок с ID {lesson_id} не найден"}, status=404)
                 original_teacher_id = lesson.teacher_id
-                # Проверка: занят ли выбранный кабинет в расписании (не включая текущий урок)
+                                                                                             
                 for rec in _active_lessons().filter(
                     classroom=replacement_room,
                     day_of_week=lesson.day_of_week,
                     start_time__lt=lesson.end_time,
                     end_time__gt=lesson.start_time
                 ).exclude(id=lesson.id).values("class_group", "lesson_number"):
-                    # Разрешаем параллельную группу (тот же класс и номер)
+                                                                          
                     if rec["class_group"] == lesson.class_group and rec["lesson_number"] == lesson.lesson_number:
                         continue
                     if not confirmed:
@@ -2602,7 +2602,7 @@ def save_cabinet_replacements(request):
                                 f"в расписании."
                             )
                         }, status=400)
-                # Проверка: занят ли кабинет уже в других заменах на эту дату
+                                                                             
                 existing_repls = Replacement.objects.filter(
                     date=selected_date,
                     replacement_classroom=replacement_room
@@ -2612,7 +2612,7 @@ def save_cabinet_replacements(request):
                     if not l2 or l2.day_of_week != lesson.day_of_week:
                         continue
                     if overlaps(lesson.start_time, lesson.end_time, l2.start_time, l2.end_time):
-                        # Разрешаем параллельную группу
+                                                       
                         if l2.class_group == lesson.class_group and l2.lesson_number == lesson.lesson_number:
                             continue
                         if not confirmed:
@@ -2622,7 +2622,7 @@ def save_cabinet_replacements(request):
                                     "в другой замене."
                                 )
                             }, status=400)
-                # Сохраняем или обновляем
+                                         
                 Replacement.objects.update_or_create(
                     lesson_id=lesson.id,
                     date=selected_date,
@@ -2782,7 +2782,7 @@ def export_cabinet_docx(request):
             "classroom": r.replacement_classroom or lsn.classroom,
             "subject": lsn.subject.name if lsn.subject else "-",
             "original_teacher": original_name or "-",
-            "replacement_teacher": "-",  # teacher does not change for cabinet replacements
+            "replacement_teacher": "-",                                                    
         })
 
     if items:
@@ -3017,7 +3017,7 @@ def teacher_conflicts_api(request):
                 item.get('lesson_number') == target_lesson.lesson_number
             )
 
-        # Уроки учителя (в этот день недели), пересекающиеся по времени
+                                                                       
         lesson_qs = _active_lessons().filter(
             teacher_id=teacher_id,
             day_of_week=day,
@@ -3025,7 +3025,7 @@ def teacher_conflicts_api(request):
             end_time__gt=start_t
         ).values('start_time', 'end_time', 'class_group', 'lesson_number')
 
-        # Сохранённые замещения учителя в выбранную дату
+                                                        
         repl_qs = _teacher_replacements().filter(
             date=selected_date,
             replacement_teacher_id=teacher_id
@@ -3033,7 +3033,7 @@ def teacher_conflicts_api(request):
 
         conflicts = []
 
-        # Ступени 1–4 и 5–11: разрешаем только с подтверждением
+                                                               
         try:
             target_grade = extract_grade(target_lesson.class_group) if target_lesson else None
             if target_grade is not None:
@@ -3074,7 +3074,7 @@ def teacher_conflicts_api(request):
                 continue
             if l2.day_of_week != day:
                 continue
-            # overlap check
+                           
             if l2.start_time < end_t and l2.end_time > start_t:
                 item = {
                     'class_group': l2.class_group,
@@ -3089,7 +3089,7 @@ def teacher_conflicts_api(request):
                         'lesson_number': l2.lesson_number,
                     })
 
-        # ⚠️ Если в этот день у учителя нет уроков в целевой смене — требуем подтверждение (но не запрещаем).
+                                                                                                             
         try:
             from django.db.models import Max, Min
             target_shift = None
@@ -3366,8 +3366,8 @@ def teacher_search(request):
 
         return JsonResponse({'results': results})
 
-    # If an explicit teacher_id is provided, return that exact teacher
-    # (useful to keep a previously saved selection visible even if it wasn't in auto-suggestions).
+                                                                      
+                                                                                                  
     if teacher_id_param:
         try:
             teachers = Teacher.objects.filter(id=int(teacher_id_param))
@@ -3376,7 +3376,7 @@ def teacher_search(request):
     else:
         teachers = Teacher.objects.order_by('full_name')
 
-    # Если нет контекста урока — отдаём обычный список.
+                                                       
     if not all([date_str, day, start_str, end_str]):
         teachers = [t for t in teachers if _name_matches_term_ci(t.full_name, term)]
         teachers = [t for t in teachers if not _is_vacancy_teacher_name(t.full_name)]
@@ -3406,11 +3406,11 @@ def teacher_search(request):
         target_lesson = None
 
     teacher_ids = [t.id for t in teachers]
-    # --- Ограничение по ступеням (1–4 vs 5–11): разрешаем выбор с подтверждением ---
+                                                                                     
     target_grade = extract_grade(target_lesson.class_group) if target_lesson else None
     target_is_primary = (target_grade is not None and target_grade <= 4)
 
-    # Определяем целевую смену для урока (по правилу школы, иначе по времени)
+                                                                             
     from django.db.models import Max, Min
     shift1_max_end = None
     shift2_min_start = None
@@ -3419,7 +3419,7 @@ def teacher_search(request):
     if target_lesson:
         target_shift = _effective_shift_for_class(target_lesson.class_group, getattr(target_lesson, 'shift', None))
     if target_shift is None:
-        # fallback по времени
+                             
         shift1_max_end = ClassSchedule.objects.filter(shift=1).aggregate(mx=Max("end_time"))["mx"]
         shift2_min_start = ClassSchedule.objects.filter(shift=2).aggregate(mn=Min("start_time"))["mn"]
         boundary = None
@@ -3438,7 +3438,7 @@ def teacher_search(request):
         else:
             target_shift = 1
 
-    # Профиль учителя по классам (в целом по расписанию)
+                                                        
     grade_map_all: dict[int, set[int]] = {}
     for t_id, cls in _active_lessons().filter(teacher_id__in=teacher_ids).values_list("teacher_id", "class_group"):
         g = extract_grade(cls)
@@ -3462,16 +3462,16 @@ def teacher_search(request):
             return True
         if target_is_primary:
             return lvl in ("1-4", "1-11")
-        # 5–11
+              
         return lvl in ("5-11", "1-11")
 
-    # helper: определяем смену урока учителя
+                                            
     def _lesson_shift_for(cls: str, st_time):
         g = extract_grade(cls)
         sh = infer_shift_by_grade(g)
         if sh in (1, 2):
             return int(sh)
-        # fallback по времени
+                             
         try:
             if shift2_min_start and boundary and st_time >= boundary:
                 return 2
@@ -3480,19 +3480,19 @@ def teacher_search(request):
         return 1
 
 
-    # Быстро соберём все уроки учителей в этот день недели
+                                                          
     day_lessons = list(
         _active_lessons().filter(teacher_id__in=teacher_ids, day_of_week=day)
         .values('teacher_id', 'start_time', 'end_time', 'class_group', 'lesson_number')
     )
 
-    # И все уже назначенные замены на выбранную дату
+                                                    
     day_repls = list(
         _teacher_replacements().filter(date=selected_date, replacement_teacher_id__in=teacher_ids)
         .select_related('lesson')
     )
 
-    # Упакуем по учителю
+                        
     lesson_map = {}
     for l in day_lessons:
         lesson_map.setdefault(l['teacher_id'], []).append(l)
@@ -3523,10 +3523,10 @@ def teacher_search(request):
     results = []
     for t in teachers:
         busy = False
-        parallel_only = True  # если пересечения есть, но все они параллельные
-        conflicts = []  # список конфликтов (не включая параллельные группы)
+        parallel_only = True                                                  
+        conflicts = []                                                      
 
-        # 1) пересечение с его расписанием
+                                          
         for l in lesson_map.get(t.id, []):
             if overlaps(start_t, end_t, l['start_time'], l['end_time']):
                 if not _is_parallel_allowed(l):
@@ -3540,7 +3540,7 @@ def teacher_search(request):
                         'lesson_number': l.get('lesson_number'),
                     })
 
-        # 2) пересечение с уже поставленными заменами
+                                                     
         for r in repl_map.get(t.id, []):
             if overlaps(start_t, end_t, r['start_time'], r['end_time']):
                 if not _is_parallel_allowed(r):
@@ -3556,12 +3556,12 @@ def teacher_search(request):
 
         status = "Свободен" if not busy else "Урок"
 
-        # Ступени: если учитель не подходит по 1–4/5–11 — разрешаем выбор, но предупреждаем
+                                                                                           
         is_vacancy = _is_vacancy_teacher_name(t.full_name)
         grade_ok = grade_ok_for_target(t.id)
         disabled = is_vacancy
 
-        # В этот день нет уроков в целевой смене? Тогда показываем пометку
+                                                                          
         no_lessons_shift = True
         for l in lesson_map.get(t.id, []):
             sh = _lesson_shift_for(l.get('class_group'), l.get('start_time'))
@@ -3741,7 +3741,7 @@ def get_saved_replacements(request):
     replacements_data = []
     for repl in replacements:
         if not (repl.lesson and repl.original_teacher and repl.replacement_teacher):
-            # На всякий случай пропускаем битые записи вместо падения API
+                                                                         
             continue
         replacements_data.append({
             "lesson_id": repl.lesson.id,
@@ -3749,7 +3749,7 @@ def get_saved_replacements(request):
             "teacher_id": repl.replacement_teacher.id,
             "date": repl.date.strftime("%Y-%m-%d"),
             "confirmed": bool(getattr(repl, 'confirmed', False)),
-            # Возвращаем выбранный кабинет, если он указан
+                                                          
             "classroom": getattr(repl, 'replacement_classroom', None),
             "production_necessity": bool(getattr(repl, "production_necessity", False)),
             "ignore_in_reports": bool(getattr(repl, "ignore_in_reports", False)),
@@ -3784,7 +3784,7 @@ from django.db.models import Min
 @login_required
 def teachers_overview_view(request):
     """Страница "Учителя": ФИО + предметы/уроки, которые ведёт учитель (через запятую)."""
-    # Проверяем право на просмотр раздела «Учителя» или «Редактор»
+                                                                  
     if not (request.user.is_superuser or getattr(request.user, 'can_teachers', False) or getattr(request.user, 'can_editor', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -3834,7 +3834,7 @@ def teachers_overview_view(request):
 
 @login_required
 def specializations_view(request):
-    # Доступ к «Редактору» разрешён только при наличии соответствующего права
+                                                                             
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -3895,7 +3895,7 @@ def specializations_view(request):
 @login_required
 @csrf_exempt
 def update_specialization(request):
-    # Редактировать специализации могут только пользователи с правом «Редактор»
+                                                                               
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
@@ -3963,7 +3963,7 @@ def update_specialization(request):
 @require_POST
 def add_teacher_api(request):
     """Create a new teacher from the specialization editor page."""
-    # Добавлять учителей разрешено только пользователям с правом «Редактор»
+                                                                           
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
     try:
@@ -4012,7 +4012,7 @@ def delete_teacher_api(request, teacher_id: int):
 
     Safety: do not allow deleting teachers that already have lessons or replacements.
     """
-    # Удалять учителей разрешено только пользователям с правом «Редактор»
+                                                                         
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
@@ -4386,7 +4386,7 @@ from .models import Lesson, Replacement, Teacher
 
 def teacher_hours(request, teacher_id):
     try:
-        # 1. Получаем выбранную дату
+                                    
         selected_date = request.GET.get('date')
         if not selected_date:
             return JsonResponse({'error': 'Missing date parameter'}, status=400)
@@ -4422,14 +4422,14 @@ def teacher_hours(request, teacher_id):
 
         teacher = Teacher.objects.get(id=teacher_id)
 
-        # 2. Находим понедельник и воскресенье этой недели
-        start_of_week = selected_date - timedelta(days=selected_date.weekday())  # Понедельник
-        end_of_week = start_of_week + timedelta(days=6)  # Воскресенье
+                                                          
+        start_of_week = selected_date - timedelta(days=selected_date.weekday())               
+        end_of_week = start_of_week + timedelta(days=6)               
 
-        # 3. Основные уроки (в Lesson)
+                                      
         base_lessons_count = _active_lessons().filter(teacher=teacher).count()
 
-        # 4. Замены в указанную неделю
+                                      
         replacement_count = _teacher_replacements().filter(
             replacement_teacher=teacher,
             date__range=(start_of_week, end_of_week)
@@ -4579,7 +4579,7 @@ def backend_health_api(request):
                 "warnings": warnings,
             })
 
-        # sqlite mode
+                     
         teacher_ids = set(Teacher.objects.values_list("id", flat=True))
         subject_ids = set(Subject.objects.values_list("id_subject", flat=True))
         lesson_ids = set(Lesson.objects.values_list("id", flat=True))
@@ -4661,7 +4661,7 @@ def _stats_date_range(mode: str, date_str: str | None, date_from: str | None, da
         label = f"Месяц: {start.strftime('%m.%Y')}"
         return mode_norm, start, end, label
 
-    # day (default)
+                   
     selected = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else today
     label = f"День: {selected.strftime('%d.%m.%Y')}"
     return "day", selected, selected, label
@@ -4743,7 +4743,7 @@ def replacement_statistics_api(request):
                 bucket["special"] += 1
             else:
                 bucket["regular"] += 1
-        # Отдельные замещения считаются обычными.
+                                                 
         for s in special_rows:
             tid = as_int(s.get("replacement_teacher_id"))
             if tid is None:
@@ -4792,7 +4792,7 @@ def replacement_statistics_api(request):
             if rt is not None:
                 item["replacing_ids"].add(rt)
 
-        # Отдельные замещения считаются обычными.
+                                                 
         for s in special_rows:
             key = str(s.get("date") or "")
             item = daily_stats.setdefault(
@@ -4907,7 +4907,7 @@ def replacement_statistics_api(request):
             bucket["special"] += 1
         else:
             bucket["regular"] += 1
-    # Отдельные замещения считаются обычными.
+                                             
     for name in special_qs.exclude(replacement_teacher__isnull=True).values_list("replacement_teacher__full_name", flat=True):
         bucket = by_replacing_teacher.setdefault(name, {"regular": 0, "special": 0})
         bucket["regular"] += 1
@@ -4951,7 +4951,7 @@ def replacement_statistics_api(request):
         if r.replacement_teacher_id:
             item["replacing_ids"].add(int(r.replacement_teacher_id))
 
-    # Отдельные замещения считаются обычными.
+                                             
     for s in special_qs:
         key = s.date.strftime("%Y-%m-%d")
         item = daily_stats.setdefault(key, {
@@ -5040,7 +5040,7 @@ def _report_range_from_request(request):
     date_to = request.GET.get("date_to")
     month_str = request.GET.get("month")
 
-    # Legacy behavior: old calendar button sent only `date`, report was monthly.
+                                                                                
     if date_str and not mode and not date_from and not date_to and not month_str:
         selected = datetime.strptime(date_str, "%Y-%m-%d").date()
         start = selected.replace(day=1)
@@ -5133,7 +5133,7 @@ def replacement_summary_report(request):
                 rows_data = [("—", ["—"], "—")]
             rows_data.sort(key=lambda x: (x[2].lower(), x[0].lower()))
         else:
-            # Все замены за выбранный диапазон
+                                              
             replacements = (
                 _teacher_replacements()
                 .filter(date__range=(start, end))
@@ -5141,14 +5141,14 @@ def replacement_summary_report(request):
                 .exclude(ignore_in_reports=True)
                 .select_related("replacement_teacher", "original_teacher", "lesson__subject")
             )
-            # Отдельные замещения: считаем как обычные (в отчёт включаем).
+                                                                          
             special_replacements = (
                 SpecialReplacement.objects
                 .filter(date__range=(start, end))
                 .select_related("replacement_teacher", "original_teacher")
             )
 
-            # Группировка: (замещающий, замещённый) -> Counter(subject -> count) + subjects_set_for_vacancy
+                                                                                                           
             grouped: dict[tuple[str, str], Counter] = defaultdict(Counter)
             vacancy_subjects: dict[tuple[str, str], set[str]] = defaultdict(set)
 
@@ -5171,7 +5171,7 @@ def replacement_summary_report(request):
                 if orig_is_vacancy and subj and subj != "Без предмета":
                     vacancy_subjects[(repl_name, orig_name_base)].add(subj)
 
-            # Подготовка строк для таблицы
+                                          
             rows_data: list[tuple[str, list[str], str]] = []
             for (repl_name, orig_base), subj_counts in grouped.items():
                 parts = []
@@ -5181,7 +5181,7 @@ def replacement_summary_report(request):
                     else:
                         parts.append(f"{cnt} ({subj})")
 
-                # Вакансия: "Вакансия (русский язык, литература)"
+                                                                 
                 orig_name = orig_base
                 if orig_base == "Вакансия":
                     subs = sorted(vacancy_subjects.get((repl_name, orig_base), set()))
@@ -5193,7 +5193,7 @@ def replacement_summary_report(request):
             if not rows_data:
                 rows_data = [("—", ["—"], "—")]
 
-            # Требование: в приказе сортируем по ФИО *замещённых* (3-я колонка) по алфавиту.
+                                                                                            
             rows_data.sort(key=lambda x: (x[2].lower(), x[0].lower()))
 
         template_candidates = [
@@ -5215,20 +5215,20 @@ def replacement_summary_report(request):
         style_row = table.rows[1]
         style_tr = copy.deepcopy(style_row._tr)
 
-        # Удаляем все строки данных из шаблона (оставляем заголовок + одну строку-образец)
-        # Строка-образец нужна, чтобы корректно "снимать" стили параграфов.
+                                                                                          
+                                                                           
         while len(table.rows) > 2:
             table._tbl.remove(table.rows[2]._tr)
 
         def _clear_paragraph(p):
-            # удалить все runs, сохранив pPr (выравнивание/стиль)
+                                                                 
             for r in list(p.runs):
                 p._p.remove(r._r)
 
         def _apply_paragraph_format(dst_p, src_p):
             dst_p.style = src_p.style
             dst_p.alignment = src_p.alignment
-            # копируем формат абзаца (если задан)
+                                                 
             try:
                 dst_pf = dst_p.paragraph_format
                 src_pf = src_p.paragraph_format
@@ -5252,11 +5252,11 @@ def replacement_summary_report(request):
             tmpl_ps = template_cell.paragraphs
             tmpl_base = tmpl_ps[0] if tmpl_ps else None
 
-            # гарантируем нужное количество параграфов
+                                                      
             while len(cell.paragraphs) < len(lines):
                 cell.add_paragraph()
 
-            # заполнение
+                        
             for i, line in enumerate(lines):
                 p = cell.paragraphs[i]
                 src_p = tmpl_ps[i] if i < len(tmpl_ps) else tmpl_base
@@ -5264,15 +5264,15 @@ def replacement_summary_report(request):
                     _apply_paragraph_format(p, src_p)
                 _clear_paragraph(p)
                 run = p.add_run(line)
-                # размер как в образце (обычно 12pt)
+                                                    
                 run.font.size = Pt(12)
 
-            # удалить лишние параграфы
+                                      
             for j in range(len(cell.paragraphs) - 1, len(lines) - 1, -1):
                 try:
                     cell._tc.remove(cell.paragraphs[j]._p)
                 except Exception:
-                    # если не получилось — просто очищаем
+                                                         
                     _clear_paragraph(cell.paragraphs[j])
 
         for repl_name, parts, orig_name in rows_data:
@@ -5280,7 +5280,7 @@ def replacement_summary_report(request):
             table._tbl.append(new_tr)
             row = table.rows[-1]
 
-            # ВАЖНО: берём "эталонные" ячейки из style_row, чтобы копировать стили абзацев
+                                                                                          
             _write_cell_lines(row.cells[0], [repl_name], style_row.cells[0])
 
             if len(parts) <= 2:
@@ -5290,13 +5290,13 @@ def replacement_summary_report(request):
 
             _write_cell_lines(row.cells[2], [orig_name], style_row.cells[2])
 
-        # Удаляем строку-образец из итогового документа
+                                                       
         try:
             table._tbl.remove(table.rows[1]._tr)
         except Exception:
             pass
 
-        # Имя файла в зависимости от режима
+                                           
         if mode_norm == "day":
             filename = f"Приказ о замещении за {start.strftime('%d.%m.%Y')}.docx"
             safe_ascii = f"replacement_order_day_{start.strftime('%Y_%m_%d')}.docx"
@@ -5456,9 +5456,9 @@ def replacement_daily_summary_docx(request):
         initials = "".join(f"{p[0].upper()}." for p in parts[1:3] if p)
         return f"{surname} {initials}".strip()
 
-    # date -> teacher (surname + initials) -> counts
+                                                    
     day_map: dict[str, dict[str, dict[str, int]]] = {}
-    # teacher (surname + initials) -> date -> counts
+                                                    
     teacher_map: dict[str, dict[str, dict[str, int]]] = {}
 
     for r in reps:
@@ -5499,7 +5499,7 @@ def replacement_daily_summary_docx(request):
             entry["zs"] += 1
             t_entry["zs"] += 1
 
-    # Summary 1: date -> teacher
+                                
     doc = Document()
     for day_key in sorted(day_map.keys(), key=lambda d: datetime.strptime(d, "%d.%m.%Y")):
         p_day = doc.add_paragraph()
@@ -5807,7 +5807,7 @@ def replacement_teacher_summary_docx(request):
 
 
 def class_schedule_view(request):
-    # Доступ к расписанию звонков разрешён только пользователям с правом «Звонки»
+                                                                                 
     if not (request.user.is_superuser or getattr(request.user, 'can_calls', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -5893,11 +5893,11 @@ def class_schedule_view(request):
         else:
             schedule = ClassSchedule.objects.all().order_by("class_group", "lesson_number", "shift")
 
-        # Группируем по: смена + список пар "урок № → (начало, конец)"
+                                                                      
         grouped = defaultdict(list)
 
-        # Сначала собираем по классам
-        class_map = defaultdict(dict)  # {class → {lesson_number: (start, end)}}
+                                     
+        class_map = defaultdict(dict)                                           
         shifts = {}
 
         for entry in schedule:
@@ -5918,7 +5918,7 @@ def class_schedule_view(request):
             class_map[cls][lnum] = (st, en)
             shifts[cls] = sh
 
-        # Затем собираем группы с одинаковыми наборами расписания
+                                                                 
         for class_group, times in class_map.items():
             key = (shifts[class_group], tuple(sorted(times.items())))
             grouped[key].append(class_group)
@@ -5931,7 +5931,7 @@ def class_schedule_view(request):
             suffix = re.sub(r"^\\d+", "", cls or "").strip().lower()
             return (grade if grade is not None else 99, suffix, cls or "")
 
-        # Сортируем классы внутри группы и сами группы по первому классу
+                                                                        
         sorted_grouped = []
         for key, classes in grouped.items():
             classes_sorted = sorted(classes, key=class_sort_key)
@@ -5943,7 +5943,7 @@ def class_schedule_view(request):
 
         sorted_grouped.sort(key=group_sort_key)
 
-        # Разделяем на блоки "Началка" (1–4) и "Старшие" (5+)
+                                                             
         primary_groups = []
         senior_groups = []
         for item in sorted_grouped:
@@ -5976,7 +5976,7 @@ def upload(request):
     - Does NOT delete Lesson rows (keeps Replacement history intact)
     - Simply deactivates previous active lessons and creates/reactivates new ones
     """
-    # Проверяем право на загрузку расписания
+                                            
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -5996,7 +5996,7 @@ def upload(request):
 
         raw = uploaded_file.read()
 
-        # HTML из браузера чаще всего UTF‑8, но иногда встречается cp1251
+                                                                         
         html_content = None
         for enc in ("utf-8-sig", "utf-8", "cp1251", "windows-1251"):
             try:
@@ -6258,7 +6258,7 @@ def special_replacement_time(request):
 
     if _use_gsheets_backend():
         shift = _effective_shift_for_class(class_group, None)
-        # Try exact class first, then same grade in the requested shift.
+                                                                        
         rows = _gs_store().get_table_dicts("replacements_class_schedule")
         start_t = end_t = None
         for r in rows:

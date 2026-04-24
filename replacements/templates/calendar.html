@@ -79,13 +79,11 @@
             specialReplacements: [],
             teacherHours: {}, // Добавляем объект для хранения часов учителей
 
-            // Конфликты/подтверждения при выборе занятого учителя
             conflictConfirm: {},   // {lessonId: true/false}
             clientConflicts: {},   // конфликты с другими выбранными заменами (внутри страницы)
             serverConflicts: {}    // конфликты с расписанием/уже сохранёнными заменами (с сервера)
         };
 
-        // flatpickr instance + dates with replacements for the currently displayed month
         let datePickerFp = null;
         let markedDates = new Set(); // YYYY-MM-DD
         let markedMonthKey = null;   // YYYY-MM
@@ -110,7 +108,6 @@
         }
 
         function resetWorkspaceKeepDate() {
-            // Keep selectedDate/selectedDay, but clear UI + data for a fresh workspace
             const keepDate = state.selectedDate;
             const keepDay = state.selectedDay;
             state.teachers = [];
@@ -139,7 +136,6 @@
             if (!res.ok) {
                 throw new Error(data?.error || 'Не удалось удалить замены');
             }
-            // Update marker set for current month
             if (markedDates.has(dateStr)) {
                 markedDates.delete(dateStr);
                 if (datePickerFp) datePickerFp.redraw();
@@ -201,7 +197,6 @@
         }
 
 
-// Date picker: use native input to avoid dependency on external CDNs.
 function revertToPreviousDate(prevDate, prevDay) {
     if (prevDate) {
         state.selectedDate = prevDate;
@@ -213,7 +208,6 @@ function revertToPreviousDate(prevDate, prevDay) {
             if (dp) dp.value = prevDate;
         }
     } else {
-        // No previous date: clear selection + workspace
         clearAll();
     }
 }
@@ -221,7 +215,6 @@ function revertToPreviousDate(prevDate, prevDay) {
 async function onDateSelected(formatted) {
     if (!formatted) return;
 
-    // Защита от двойных срабатываний (flatpickr может дергать onChange несколько раз при одних и тех же значениях)
     if (state._dateSelectLock) return;
     state._dateSelectLock = true;
 
@@ -229,7 +222,6 @@ async function onDateSelected(formatted) {
     const prevDay = state.selectedDay;
     state.selectedDate = formatted;
 
-    // Build JS Date in local time (avoid timezone shifts)
     const parts = formatted.split('-').map(x => parseInt(x, 10));
     const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
 
@@ -237,7 +229,6 @@ async function onDateSelected(formatted) {
     state.selectedDay = dayMap[dt.getDay()].toLowerCase();
 
     try {
-        // Если на странице есть неподтверждённые предупреждения — не даём "потерять" изменения.
         updateSaveButtonState();
         if (document.getElementById('saveButton')?.disabled) {
             AppUI.toast('Сначала подтвердите все предупреждения (флажки), затем можно переключать дату.', 'warning');
@@ -264,7 +255,6 @@ async function onDateSelected(formatted) {
                 await ensureVacancyTeachersForSelectedDate();
                 AppUI.toast('Замещения загружены.', 'success');
             } else if (result.isDenied) {
-                // Очистить на сервере и показать пустое рабочее место
                 const confirmClear = await Swal.fire({
                     title: "❌ Очистить замены?",
                     text: "Все замены на эту дату будут удалены.",
@@ -278,15 +268,12 @@ async function onDateSelected(formatted) {
                     resetWorkspaceKeepDate();
                     await ensureVacancyTeachersForSelectedDate();
                 } else {
-                    // cancelled clearing -> revert date selection
                     revertToPreviousDate(prevDate, prevDay);
                 }
             } else {
-                // Cancel -> revert date selection
                 revertToPreviousDate(prevDate, prevDay);
             }
         } else {
-            // Пустая дата -> сразу показываем пустое рабочее место
             resetWorkspaceKeepDate();
             await ensureVacancyTeachersForSelectedDate();
         }
@@ -313,8 +300,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Restore удобный календарь (flatpickr). Если CDN недоступен — останется ручной ввод.
-    // Важно: НЕ вешаем дополнительный dp.change, если есть flatpickr — иначе onDateSelected может сработать дважды.
     if (window.flatpickr) {
         datePickerFp = window.flatpickr(dp, {
             dateFormat: "Y-m-d",
@@ -342,7 +327,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     } else {
-        // Фоллбек: если flatpickr недоступен и пользователь вводит дату вручную
         dp.addEventListener('change', async () => {
             await onDateSelected(dp.value);
         });
@@ -381,7 +365,6 @@ async function fetchSavedReplacements() {
                 ignoreInReports: repl.ignore_in_reports === true,
                 date: state.selectedDate
             };
-            // Если предупреждения уже были подтверждены при сохранении — не требуем повторного подтверждения.
             if (repl.confirmed === true) {
                 state.conflictConfirm[repl.lesson_id] = true;
             }
@@ -403,8 +386,6 @@ async function fetchSavedReplacements() {
             original_teacher_name: sr.original_teacher_name || ''
         }));
         renderSpecialReplacements();
-        // Обновляем UI выбора учителей: показываем тех, у кого есть замены в этот день.
-        // Это делает "Открыть" наглядным (пользователь сразу видит, что данные загружены).
         const teacherPickers = document.getElementById('teacherSelectContainer');
         if (teacherPickers) teacherPickers.innerHTML = '';
 
@@ -418,20 +399,17 @@ async function fetchSavedReplacements() {
                     lessons: []
                 });
 
-                // Добавляем селект в панель "Учителя" и выставляем значение (без лишней логики автодобавления)
                 if (teacherPickers) {
                     const block = document.createElement('div');
                     block.className = 'repl-picker';
                     block.innerHTML = `<select class="js-teacher-select repl-picker__select"><option></option></select>`;
                     teacherPickers.appendChild(block);
                     initSelect2(block);
-                    // Проставляем значение напрямую
                     const $sel = $(block).find('.js-teacher-select');
                     const opt = new Option(teacherData.name, teacherId, true, true);
                     $sel.append(opt).trigger('change');
                 }
 
-                // Загружаем количество часов для учителя
                 const hoursResponse = await fetch(`/replacements/api/teacher-hours/${teacherId}/?date=${state.selectedDate}`);
                 const hoursData = await hoursResponse.json();
                 state.teacherHours[teacherId] = {
@@ -454,9 +432,6 @@ async function fetchSavedReplacements() {
         }
 
         renderTeacherSelection();
-        // После отрисовки учителей и уроков подгружаем конфликты по кабинетам для сохранённых замен
-        // Конфликты по кабинетам не обрабатываются на странице замещений учителей
-        // Для наглядности при "Открыть" раскрываем карточки учителей и прокручиваем к рабочей области.
         setTimeout(() => {
             try {
                 (state.teachers || []).forEach(t => toggleLessons(t.id, true));
@@ -471,7 +446,6 @@ async function fetchSavedReplacements() {
     }
 }
 
-// Загружается свернуто по умолчанию
 function renderTeacherSelection() {
     const container = document.getElementById('teachersContainer');
     container.innerHTML = state.teachers.map(teacher => {
@@ -1014,7 +988,7 @@ function renderLessons(teacherId) {
             </div>
             <p class="repl-lesson__meta">${lesson.subject} · ${lesson.class}</p>
 
-            <!-- Выбор учителя для замены -->
+            
             <select
               class="replacement-select"
               data-lesson-id="${lesson.id}"
@@ -1026,7 +1000,7 @@ function renderLessons(teacherId) {
               <option value="">Выберите замену...</option>
             </select>
 
-            <!-- Выбор кабинета для замещения -->
+            
             
 
             <label class="repl-lesson__flag">
@@ -1061,13 +1035,10 @@ function renderLessons(teacherId) {
     });
 }
 
-// Select2-поиск по всем учителям при ручном выборе замещения.
-// Даже если учитель не попал в подсказки, его можно найти по фамилии.
 function initReplacementSelect(selectElement) {
     if (!selectElement) return;
     const $sel = $(selectElement);
 
-    // Если уже инициализировано — переинициализируем после перерендера options
     if ($sel.data('select2')) {
         $sel.off('select2:select');
         $sel.select2('destroy');
@@ -1113,7 +1084,6 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
         const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
         const eligible = [];
 
-        // --- helpers for overlap checks (selected replacements) ---
         const toMin = (hhmm) => {
             const [h, m] = String(hhmm || '0:0').split(':').map(x => parseInt(x, 10));
             return (h || 0) * 60 + (m || 0);
@@ -1134,7 +1104,6 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
         };
 
         suggestions.forEach(teacher => {
-            // Teacher is considered occupied only if there is a TIME overlap with another selected replacement.
             const isOccupied = Object.values(state.replacements).some(repl => {
                 if (repl.replacementTeacherId !== teacher.id) return false;
                 if (repl.date !== state.selectedDate) return false;
@@ -1142,7 +1111,6 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
                 const otherLesson = findLessonById(repl.lessonId);
                 if (!otherLesson) return false;
                 if (!overlapsTime(lesson.start, lesson.end, otherLesson.start, otherLesson.end)) return false;
-                // allow "parallel group" (same class + same lesson number)
                 return !isParallelSame(lesson, otherLesson);
             });
 
@@ -1176,12 +1144,8 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
                 `${warnings ? ' — ' + warnings : ''}`,
                 teacher.id
             );
-            // Выбор разрешён даже если учитель занят: в этом случае появится предупреждение + флажок подтверждения.
-            // Пересечение ступеней требует подтверждения.
             selectElement.appendChild(option);
 
-            // Eligible for AUTO selection only if server says it is allowed
-            // (grade group + shift rules) and the teacher is not occupied by another selected replacement.
             if (((autoAllowed && !isOccupied && !hasConflict && !noLessons && !crossLevel) || isSecondGroup) && !crossLevel) {
                 eligible.push({
                     id: teacher.id,
@@ -1203,13 +1167,9 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
             }
         }
 
-        // Если на урок уже выбрана замена (например, загружена из БД),
-        // то выбранный учитель мог не попасть в auto-suggestions (потому что он занят/другая смена и т.д.).
-        // В этом случае добавим его в options принудительно, чтобы выбор не "пропадал" после сохранения.
         if (state.replacements[lesson.id]) {
             const selectedId = state.replacements[lesson.id].replacementTeacherId;
 
-            // Если среди option нет нужного teacher_id — подтянем красивый текст через /api/teachers/?teacher_id=...
             const hasOption = !!selectElement.querySelector(`option[value="${selectedId}"]`);
             if (!hasOption && selectedId) {
                 try {
@@ -1235,19 +1195,16 @@ async function loadSuggestions(teacherId, lesson, selectElement) {
 
             selectElement.value = selectedId;
 
-            // Подтягиваем предупреждения (занят/пересечения/нет уроков в смену) и учитываем подтверждения.
             await fetchServerConflicts(lesson.id, selectedId);
             recomputeClientConflictsForTeacher(selectedId);
         }
 
-        // Включаем поиск по всем учителям (Select2) для ручного выбора.
     } catch (error) {
         console.error('Ошибка загрузки предложений:', error);
         if (selectElement && selectElement.options.length === 0) {
             selectElement.innerHTML = '<option value="">Выберите замену...</option>';
         }
     } finally {
-        // Включаем поиск по всем учителям (Select2) для ручного выбора.
         initReplacementSelect(selectElement);
     }
 }
@@ -1270,7 +1227,6 @@ function getCookie(name) {
 }
 
 
-// --- Конфликты: только предупреждения (без обязательных флажков) ---
 
 function getLessonMetaById(lessonId) {
     for (const lessons of Object.values(state.lessons || {})) {
@@ -1342,7 +1298,6 @@ function renderConflictUIForLesson(lessonId) {
         if (c.type === 'room_selected') {
             return `<div class="conflict-line">⚠️ В это время ${t} вы уже выбрали этот кабинет для замещения у ${cls} класса.</div>`;
         }
-        // client-selected overlap (учитель)
         return `<div class="conflict-line">⚠️ В это время ${t} вы уже поставили этого учителя на замещение у ${cls} класса.</div>`;
     }).join('');
 
@@ -1365,7 +1320,6 @@ function updateSaveButtonState() {
 async function fetchServerConflicts(lessonId, teacherId) {
     const meta = getLessonMetaById(lessonId);
     if (!meta || !teacherId || !state.selectedDate || !state.selectedDay) {
-        // Если нет данных для запроса, удаляем только конфликты от учителя, сохраняя конфликты по кабинетам
         if (state.serverConflicts[lessonId]) {
             const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'teacher');
             if (remain.length > 0) {
@@ -1391,15 +1345,12 @@ async function fetchServerConflicts(lessonId, teacherId) {
         const data = await res.json();
 
         const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
-        // Отмечаем источник конфликта как teacher и объединяем с существующими (кабинет) конфликтами
         const teacherConfs = conflicts.map(c => Object.assign({}, c, { _source: 'teacher' }));
         let existing = state.serverConflicts[lessonId] || [];
-        // Оставляем только конфликты не от учителя (например, кабинеты)
         existing = existing.filter(c => c._source !== 'teacher');
         const merged = existing.concat(teacherConfs);
         if (merged.length > 0) {
             state.serverConflicts[lessonId] = merged;
-            // по умолчанию сбрасываем подтверждение при появлении конфликтов
             if (state.conflictConfirm[lessonId] !== true) {
                 state.conflictConfirm[lessonId] = false;
             }
@@ -1409,16 +1360,13 @@ async function fetchServerConflicts(lessonId, teacherId) {
         renderConflictUIForLesson(lessonId);
     } catch (e) {
         console.warn('Не удалось получить конфликты с сервера', e);
-        // не блокируем UI, просто убираем серверные конфликты
         delete state.serverConflicts[lessonId];
         renderConflictUIForLesson(lessonId);
     }
 }
 
-// --- Конфликты по кабинетам (сервер) ---
 async function fetchRoomServerConflicts(lessonId, room) {
     const meta = getLessonMetaById(lessonId);
-    // Если нет даты/дня/меты или не выбран кабинет — очищаем только конфликты по кабинетам
     if (!room || !meta || !state.selectedDate || !state.selectedDay) {
         if (state.serverConflicts[lessonId]) {
             const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'room');
@@ -1468,7 +1416,6 @@ async function fetchRoomServerConflicts(lessonId, room) {
     }
 }
 
-// --- Пересечения выбранных кабинетов в клиенте ---
 function recomputeClientRoomConflicts(room) {
     if (!room) return;
     const lessonIds = Object.values(state.replacements || {})
@@ -1506,7 +1453,6 @@ function recomputeClientRoomConflicts(room) {
     updateSaveButtonState();
 }
 
-// --- Загрузка списка кабинетов ---
 async function loadRoomOptions(lesson, selectElement) {
     if (!selectElement) return;
     if (!state.selectedDate || !state.selectedDay) {
@@ -1553,7 +1499,6 @@ async function loadRoomOptions(lesson, selectElement) {
     }
 }
 
-// --- Обработчик выбора кабинета ---
 async function handleRoomSelect(lessonId, roomValue) {
     const prevRepl = state.replacements[lessonId];
     const prevRoom = prevRepl ? prevRepl.replacementClassroom : '';
@@ -1619,12 +1564,10 @@ async function handleRoomSelect(lessonId, roomValue) {
 function recomputeClientConflictsForTeacher(teacherId) {
     if (!teacherId) return;
 
-    // уроки (lessonId), где выбран этот teacherId
     const lessonIds = Object.values(state.replacements || {})
         .filter(r => r.date === state.selectedDate && r.replacementTeacherId === teacherId)
         .map(r => r.lessonId);
 
-    // Сбросим старые конфликты для этих уроков (только от учителя)
     lessonIds.forEach(lid => {
         if (state.clientConflicts[lid]) {
             state.clientConflicts[lid] = state.clientConflicts[lid].filter(c => c._source !== 'teacher');
@@ -1645,20 +1588,17 @@ function recomputeClientConflictsForTeacher(teacherId) {
             if (!b) continue;
 
             if (overlapsTime(a.start, a.end, b.start, b.end) && !isParallelSame(a, b)) {
-                // добавляем конфликт на оба урока и помечаем источник
                 if (!state.clientConflicts[aId]) state.clientConflicts[aId] = [];
                 if (!state.clientConflicts[bId]) state.clientConflicts[bId] = [];
                 state.clientConflicts[aId].push({ type: 'selected', start: b.start, end: b.end, class_group: b.class, lesson_number: b.number, _source: 'teacher' });
                 state.clientConflicts[bId].push({ type: 'selected', start: a.start, end: a.end, class_group: a.class, lesson_number: a.number, _source: 'teacher' });
 
-                // требуем подтверждение
                 if (state.conflictConfirm[aId] !== true) state.conflictConfirm[aId] = false;
                 if (state.conflictConfirm[bId] !== true) state.conflictConfirm[bId] = false;
             }
         }
     }
 
-    // чистим пустые
     lessonIds.forEach(lid => {
         if (state.clientConflicts[lid] && state.clientConflicts[lid].length === 0) {
             delete state.clientConflicts[lid];
@@ -1683,8 +1623,6 @@ async function saveReplacements() {
                 AppUI.toast('Замены не изменены.', 'info');
                 return;
             }
-            // Важно: не удаляем заранее отдельным запросом, чтобы не потерять данные при ошибке.
-            // Сервер перезапишет всё В ТРАНЗАКЦИИ.
             replace_all = true;
         }
 
@@ -1710,7 +1648,6 @@ async function saveReplacements() {
         const saveData = await saveRes.json();
         if (saveRes.ok && saveData.status === 'success') {
             AppUI.toast('Замены успешно сохранены!', 'success');
-            // Mark this date in the calendar as having replacements
             if (state.selectedDate) {
                 markedDates.add(state.selectedDate);
                 if (datePickerFp) datePickerFp.redraw();
@@ -1727,7 +1664,6 @@ async function saveReplacements() {
 }
 
 async function handleReplacementSelect(originalTeacherId, lessonId, replacementTeacherId) {
-    // Приводим входящее значение к числу или null
     let newTeacherId = parseInt(replacementTeacherId);
     if (isNaN(newTeacherId)) newTeacherId = null;
 
@@ -1737,7 +1673,6 @@ async function handleReplacementSelect(originalTeacherId, lessonId, replacementT
     const prevProd = prevRepl ? !!prevRepl.productionNecessity : false;
     const prevIgnore = prevRepl ? !!prevRepl.ignoreInReports : false;
 
-    // Если меняем учителя — удаляем только учительские конфликты
     if (prevTeacherId && prevTeacherId !== newTeacherId) {
         if (state.serverConflicts[lessonId]) {
             const remain = state.serverConflicts[lessonId].filter(c => c._source !== 'teacher');
@@ -1757,9 +1692,7 @@ async function handleReplacementSelect(originalTeacherId, lessonId, replacementT
         renderConflictUIForLesson(lessonId);
     }
 
-    // Если выбор учителя очищен
     if (!newTeacherId) {
-        // Если была комната — сохраняем её, иначе полностью удаляем запись
         if (prevRepl && prevRepl.replacementClassroom) {
             state.replacements[lessonId] = {
                 lessonId: lessonId,
@@ -1774,7 +1707,6 @@ async function handleReplacementSelect(originalTeacherId, lessonId, replacementT
             if (prevTeacherId) {
                 recomputeClientConflictsForTeacher(prevTeacherId);
             }
-            // удаляем все конфликты для урока
             if (state.serverConflicts[lessonId]) {
                 delete state.serverConflicts[lessonId];
             }
@@ -1784,13 +1716,11 @@ async function handleReplacementSelect(originalTeacherId, lessonId, replacementT
             delete state.conflictConfirm[lessonId];
             delete state.replacements[lessonId];
         }
-        // Комнаты не обрабатываются в календаре замещений учителей
         updateSaveButtonState();
         updateProductionFlagUI(lessonId);
         return;
     }
 
-    // Устанавливаем запись замены с новым учителем, сохраняя комнату (если была)
     state.replacements[lessonId] = {
         lessonId: lessonId,
         originalTeacherId: originalTeacherId,
@@ -1801,13 +1731,11 @@ async function handleReplacementSelect(originalTeacherId, lessonId, replacementT
         date: state.selectedDate
     };
 
-    // Обновим конфликты (сервер + выбранные замены)
     await fetchServerConflicts(lessonId, newTeacherId);
     recomputeClientConflictsForTeacher(newTeacherId);
     if (prevTeacherId && prevTeacherId !== newTeacherId) {
         recomputeClientConflictsForTeacher(prevTeacherId);
     }
-    // Комнаты не обрабатываются в календаре замещений учителей
 
     const originalLesson = Object.values(state.lessons[originalTeacherId] || []).find(l => l.id === lessonId);
     if (!originalLesson) return;
@@ -2069,7 +1997,6 @@ function buildSpecialExportRows(items) {
 }
 
 function groupRowsBySubjectAndOriginal(rows) {
-    // Precompute teacher categories based on non-РОВ subjects
     const teacherCats = {};
     for (const row of (rows || [])) {
         const origKey = String(row.original || "—").trim() || "—";
@@ -2098,7 +2025,6 @@ function groupRowsBySubjectAndOriginal(rows) {
         grouped[subjectKey][origKey][shiftKey].push(row);
     }
 
-    // sort keys for stable output
     const sorted = {};
     const subjectOrder = ["Русский язык", "Математика"];
     const subjects = Object.keys(grouped).sort((a, b) => {
@@ -2211,7 +2137,6 @@ function generateTeacherTables(teachers) {
                 ]
             }));
 
-            // Header row (after shift label)
             rows.push(new docx.TableRow({
                 children: headerCells.map((text, idx) => makeCell(text, colWidths[idx], "D3D3D3"))
             }));
@@ -2318,7 +2243,6 @@ async function downloadReplacementReport() {
 
     try {
         const pickName = (d) => {
-            // filename*=UTF-8''...
             const mStar = d.match(/filename\*=UTF-8''([^;]+)/i);
             if (mStar && mStar[1]) {
                 try { return decodeURIComponent(mStar[1]); } catch (e) { return mStar[1]; }

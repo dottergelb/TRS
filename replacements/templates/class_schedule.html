@@ -276,7 +276,6 @@
       });
     });
 
-    // Auto-calc end time by duration
     document.querySelectorAll('input[type="time"]').forEach(input => {
       if (input.name.startsWith('start_')) {
         input.addEventListener('input', function () {
@@ -300,7 +299,6 @@
       }
     });
 
-    // Load saved block into the editor
     document.querySelectorAll('.edit-button').forEach(button => {
       button.addEventListener('click', function () {
         document.getElementById('shift-select').value = this.dataset.shift;

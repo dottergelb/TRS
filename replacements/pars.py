@@ -2,11 +2,11 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import re
 from collections import defaultdict
-from .models import Teacher, Subject, Lesson  # Django модели
+from .models import Teacher, Subject, Lesson                 
 from .scheduling import extract_grade, infer_shift_by_grade
 
 SUBJECT_REPLACEMENTS = {
-    '{subjectname}': '{subjectname}',  # шаблонная заглушка в HTML
+    '{subjectname}': '{subjectname}',                             
 
     'Алгебра': 'Алгебра',
     'Английский ...': 'Английский язык',
@@ -29,16 +29,16 @@ SUBJECT_REPLACEMENTS = {
     'Обраб. инфо...': 'Обр.инф.',
     'Обществозна...': 'Обществознание',
     'Окр. мир': 'Окружающий мир',
-    'ПрВО': 'ПрВО',      # если нужно — впишешь расшифровку
+    'ПрВО': 'ПрВО',                                        
     'Право': 'Право',
-    'РЗПТБ': 'РЗПТБ',    # если нужно — впишешь расшифровку
-    'РЗПТХ': 'РЗПТХ',    # если нужно — впишешь расшифровку
-    'РМГ': 'РМГ',        # если нужно — впишешь расшифровку
+    'РЗПТБ': 'РЗПТБ',                                      
+    'РЗПТХ': 'РЗПТХ',                                      
+    'РМГ': 'РМГ',                                          
     'Развитие ре...': 'Развитие речи',
     'Разговоры о...': 'РоВ',
     'Реш. сл. з....': 'РСЗ',
     'Русский язы...': 'Русский язык',
-    'СВОиП': 'СВОиП',    # если нужно — впишешь расшифровку
+    'СВОиП': 'СВОиП',                                      
     'Слож. вопр....': 'СВРЯ',
     'Т. р. с КИМ...': 'Т. р. с КИМ',
     'Труд': 'Труд',
@@ -53,9 +53,9 @@ SUBJECT_REPLACEMENTS = {
 
 def normalize_class(raw):
     raw = raw.replace('\xa0', ' ').strip()
-    raw = re.sub(r'\(.*?\)', '', raw)  # удаляет всё в скобках
-    raw = raw.replace(')', '').replace('(', '')  # на случай одиночных скобок
-    return raw.replace(' ', '')  # убираем пробелы
+    raw = re.sub(r'\(.*?\)', '', raw)                         
+    raw = raw.replace(')', '').replace('(', '')                              
+    return raw.replace(' ', '')                   
 
 
 def extract_class_number(raw):
@@ -64,10 +64,10 @@ def extract_class_number(raw):
 
 def replace_subject(name):
     name = (name or '').strip()
-    # 1) точное совпадение
+                          
     if name in SUBJECT_REPLACEMENTS:
         return SUBJECT_REPLACEMENTS[name]
-    # 2) совпадение по началу (для обрезанных названий с "...")
+                                                               
     for pattern, replacement in SUBJECT_REPLACEMENTS.items():
         if pattern and name.startswith(pattern):
             return replacement
@@ -88,7 +88,7 @@ def parse_schedule_file(html_content, shifts):
 
     day_map = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
 
-    # ✅ Основной (правильный для «Save as Webpage» из Дневник.ру) вариант
+                                                                         
     teacher_cells = soup.select("div.lefttable td.rowitem.border.left")
     content_rows = soup.select("div.contenttable table tr")
 
@@ -96,7 +96,7 @@ def parse_schedule_file(html_content, shifts):
         for teacher_cell, row in zip(teacher_cells, content_rows):
             teacher_name = teacher_cell.get_text(" ", strip=True)
 
-            # иногда попадаются строки вроде "Вакансия"
+                                                       
             if not teacher_name or teacher_name.lower().startswith("вакан"):
                 continue
 
@@ -127,12 +127,12 @@ def parse_schedule_file(html_content, shifts):
                     room_el = lesson.select_one(".gray2")
                     room = room_el.get_text(strip=True) if room_el else ""
 
-                    # Определяем смену по правилу школы (1–4: 1 смена; 6–8: 2 смена; 5/9/10/11: 1 смена)
+                                                                                                        
                     grade = extract_grade(raw_class)
                     preferred_shift = infer_shift_by_grade(grade)
 
-                    # Сначала пытаемся найти звонок именно для нужной смены (если смена определилась),
-                    # иначе — любой подходящий (как раньше).
+                                                                                                      
+                                                            
                     if preferred_shift in (1, 2):
                         matched_shift = next(
                             (
@@ -156,8 +156,8 @@ def parse_schedule_file(html_content, shifts):
                             None,
                         )
 
-                    # если не настроено расписание звонков (ClassSchedule) —
-                    # лучше не "молчать", а пропустить запись
+                                                                            
+                                                             
                     if not matched_shift:
                         continue
 
@@ -175,7 +175,7 @@ def parse_schedule_file(html_content, shifts):
 
         return result
 
-    # 🔁 Фолбэк: если HTML другого формата (всё лежит в одном <tr>)
+                                                                  
     for row in soup.select("tr"):
         teacher_tag = row.select_one("td.rowitem a.teacher")
         if not teacher_tag:
@@ -256,7 +256,7 @@ def save_lessons_to_db(data):
     Instead, upload() deactivates the previous active schedule (Lesson.is_active=False),
     and here we create (or reactivate) lessons as is_active=True.
     """
-    # Precompute subjects per teacher to keep Teacher.specialization fresh
+                                                                          
     subjects_by_teacher = defaultdict(set)
     for item in data:
         subjects_by_teacher[item['teacher']].add(item['subject'])
@@ -265,7 +265,7 @@ def save_lessons_to_db(data):
         subject_obj, _ = Subject.objects.get_or_create(name=item['subject'])
         teacher_obj, _ = Teacher.objects.get_or_create(full_name=item['teacher'])
 
-        # Update specialization for this teacher (based on current upload data)
+                                                                               
         subject_ids = Subject.objects.filter(
             name__in=subjects_by_teacher.get(item['teacher'], set())
         ).values_list('id_subject', flat=True)
@@ -273,8 +273,8 @@ def save_lessons_to_db(data):
         teacher_obj.specialization = ','.join(str(sid) for sid in sorted(subject_ids))
         teacher_obj.save(update_fields=['specialization'])
 
-        # Try to reactivate an *exact* matching lesson (to avoid duplicates on re-upload),
-        # but never update times/shift on existing rows.
+                                                                                          
+                                                        
         existing = Lesson.objects.filter(
             teacher=teacher_obj,
             subject=subject_obj,
