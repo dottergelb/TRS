@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Оповещения сотрудников{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Оповещения сотрудников</h1>
+      <p class="page-subtitle">Статусы ознакомления по отправленным уведомлениям</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body table-responsive">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Дата замещений</th>
+            <th>Получатель</th>
+            <th>Статус</th>
+            <th>Когда отправлено</th>
+            <th>Когда прочитано</th>
+            <th>Действие</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in notifications %}
+            <tr>
+              <td>{{ n.target_date|date:"d.m.Y" }}</td>
+              <td>{{ n.recipient.full_name|default:n.recipient.username }}</td>
+              <td>{{ n.status }}</td>
+              <td>{{ n.created_at|date:"d.m.Y H:i" }}</td>
+              <td>{% if n.read_at %}{{ n.read_at|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+              <td>
+                {% if n.status == 'question' and n.tickets.first %}
+                  <a class="btn btn--secondary btn--sm" href="{% url 'communications:ticket_detail' n.tickets.first.id %}">Открыть тикет</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6">Данных пока нет.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+

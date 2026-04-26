@@ -1,182 +1,562 @@
 {% extends "base.html" %}
 
 {% block title %}Статистика замещений{% endblock %}
+{% block container_class %}container--wide{% endblock %}
 
 {% block extra_head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/style.css">
 <style>
+  .stats-shell {
+    display: grid;
+    gap: 14px;
+  }
+
   .stats-toolbar {
+    position: sticky;
+    top: calc(var(--top-nav-height) + 8px);
+    z-index: 800;
+  }
+
+  .stats-toolbar__body {
     display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .stats-toolbar__left {
+    display: flex;
+    align-items: flex-end;
     gap: 10px;
     flex-wrap: wrap;
-    align-items: flex-end;
   }
-  .stats-mode-group {
-    display: inline-flex;
+
+  .stats-toolbar__right {
+    display: flex;
+    align-items: center;
     gap: 8px;
     flex-wrap: wrap;
   }
+
+  .stats-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+
+  .stats-meta .badge {
+    background: rgba(15, 92, 214, 0.08);
+    border-color: rgba(15, 92, 214, 0.22);
+    color: #1f3f7a;
+  }
+
+  .stats-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
   .kpi {
-    padding: 14px;
-    border-radius: 14px;
     border: 1px solid var(--border);
-    background: linear-gradient(180deg, rgba(15, 118, 110, 0.08), rgba(15, 118, 110, 0.02));
+    border-radius: 14px;
+    background: #fff;
+    padding: 14px;
   }
+
   .kpi__label {
-    margin: 0 0 6px;
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 700;
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #607089;
   }
+
   .kpi__value {
     margin: 0;
     font-size: 30px;
-    font-weight: 900;
     line-height: 1;
+    font-family: "Space Grotesk", "Manrope", sans-serif;
+    letter-spacing: -0.03em;
   }
-  .bars {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .bars--scroll {
-    max-height: 420px;
-    overflow-y: auto;
-    padding-right: 6px;
-  }
-  .bar-row {
-    display: grid;
-    grid-template-columns: minmax(180px, 2fr) minmax(220px, 6fr) minmax(44px, auto);
-    align-items: center;
-    gap: 10px;
-  }
-  .bar-label {
-    font-size: 13px;
-    font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .bar-track {
-    height: 12px;
-    border-radius: 999px;
-    background: rgba(15, 118, 110, 0.12);
-    overflow: hidden;
-  }
-  .bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #0f766e, #14b8a6);
-  }
-  .bar-value {
+
+  .kpi__trend {
+    margin-top: 9px;
     font-size: 12px;
-    color: var(--muted);
-    font-weight: 800;
+    color: #64748b;
   }
+
+  .kpi__trend b {
+    color: #0f766e;
+  }
+
+  .stats-main {
+    display: grid;
+    grid-template-columns: 1.7fr 1fr;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .stats-chart-head {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .stats-scope {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #f8fafc;
+  }
+
+  .stats-scope button {
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+
+  .stats-scope button.is-active {
+    background: #fff;
+    color: #0f5cd6;
+    box-shadow: 0 2px 8px rgba(2, 6, 23, 0.08);
+  }
+
   .daily-chart {
     display: flex;
     align-items: flex-end;
-    gap: 6px;
-    min-height: 180px;
-    padding-top: 14px;
+    gap: 8px;
+    min-height: 210px;
     overflow-x: auto;
+    padding: 8px 4px 0;
   }
+
   .daily-col {
-    min-width: 22px;
+    min-width: 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 6px;
   }
+
   .daily-col__bar {
     width: 100%;
     min-height: 2px;
     border-radius: 8px 8px 2px 2px;
-    background: linear-gradient(180deg, #e07a5f, #0f766e);
+    background: linear-gradient(180deg, #0f5cd6, #0f766e);
   }
+
   .daily-col__lbl {
     font-size: 11px;
     color: var(--muted);
     writing-mode: vertical-rl;
     transform: rotate(180deg);
   }
-  .hidden { display: none !important; }
+
+  .stats-right {
+    display: grid;
+    gap: 12px;
+  }
+
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+  }
+
+  .donut {
+    width: 170px;
+    height: 170px;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: conic-gradient(#0f5cd6 0deg, #0f5cd6 0deg, #0f766e 0deg, #0f766e 360deg);
+    position: relative;
+  }
+
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 22px;
+    border-radius: 50%;
+    background: #fff;
+    border: 1px solid var(--border);
+  }
+
+  .donut__center {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 1;
+    text-align: center;
+  }
+
+  .donut__value {
+    margin: 0;
+    font-family: "Space Grotesk", "Manrope", sans-serif;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+
+  .donut__caption { display: none; }
+  .legend { display: none; }
+
+  .mini-metrics {
+    display: grid;
+    gap: 8px;
+  }
+
+  .mini-metric {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 9px 10px;
+    background: #fff;
+    display: grid;
+    gap: 3px;
+  }
+
+  .mini-metric__label {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #607089;
+  }
+
+  .mini-metric__value {
+    font-size: 20px;
+    font-family: "Space Grotesk", "Manrope", sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  .stats-tables {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .bars--scroll {
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 6px;
+  }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 2fr) minmax(140px, 6fr) minmax(44px, auto);
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+  }
+
+  .bar-label__avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    background: linear-gradient(135deg, rgba(15, 92, 214, 0.14), rgba(20, 184, 166, 0.16));
+    border: 1px solid rgba(15, 92, 214, 0.22);
+    flex: 0 0 auto;
+  }
+
+  .bar-label__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bar-track {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(15, 118, 110, 0.12);
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0f5cd6, #14b8a6);
+  }
 
   .bar-value {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 800;
     justify-self: end;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+
+  .stats-date-input {
+    min-width: 150px;
+    height: 40px;
+    font-weight: 700;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+    border-color: rgba(15, 92, 214, 0.22);
+  }
+
+  .flatpickr-calendar.stats-fp {
+    border-radius: 16px;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    box-shadow: 0 22px 44px rgba(15, 23, 42, 0.22);
+    padding: 8px;
+  }
+
+  .stats-fp .flatpickr-current-month {
+    font-size: 15px;
+    font-weight: 900;
+    color: #0f172a;
+  }
+
+  .stats-fp .flatpickr-weekday {
+    font-size: 11px;
+    font-weight: 800;
+    color: #64748b;
+  }
+
+  .stats-fp .flatpickr-day {
+    border-radius: 9px;
+    font-weight: 700;
+    border-color: transparent;
+  }
+
+  .stats-fp .flatpickr-day.today {
+    border-color: rgba(15, 92, 214, 0.4);
+  }
+
+  .stats-fp .flatpickr-day.selected,
+  .stats-fp .flatpickr-day.startRange,
+  .stats-fp .flatpickr-day.endRange {
+    background: linear-gradient(135deg, #0f5cd6, #0f766e);
+    border-color: transparent;
+  }
+
+  .stats-fp .flatpickr-day:hover {
+    background: rgba(15, 92, 214, 0.14);
+    border-color: rgba(15, 92, 214, 0.3);
+  }
+
+  .stats-fp .numInput.cur-year,
+  .stats-fp .flatpickr-monthDropdown-months {
+    border-radius: 8px;
+    font-weight: 700;
+  }
+
+  .stats-fp.arrowTop:before,
+  .stats-fp.arrowTop:after {
+    display: none;
+  }
+
+  .stats-meta,
+  #statsState,
+  #statsUpdated {
+    display: none !important;
+  }
+
+  .kpi__trend--hide {
+    display: none !important;
+  }
+
+  @media (max-width: 1200px) {
+    .stats-kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .stats-main {
+      grid-template-columns: 1fr;
+    }
+    .stats-tables {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 780px) {
+    .stats-kpis {
+      grid-template-columns: 1fr;
+    }
+    .donut-wrap {
+      justify-content: center;
+    }
+    .stats-toolbar__left,
+    .stats-toolbar__right {
+      width: 100%;
+    }
+    .stats-toolbar__right .btn {
+      flex: 1 1 100%;
+    }
   }
 </style>
 {% endblock %}
 
 {% block content %}
+<div class="stats-shell">
   <div class="page-header">
     <div>
       <h1 class="page-title">Статистика замещений</h1>
-      <p class="page-subtitle">Аналитика по замещениям за день, период или месяц.</p>
+      <p class="page-subtitle">Дашборд по нагрузке, отсутствиям и замещениям. Данные обновляются по выбранному периоду.</p>
     </div>
   </div>
 
-  <div class="card">
-    <div class="card__header card__header--stack">
-      <div class="stats-toolbar">
+  <div class="card stats-toolbar">
+    <div class="card__body stats-toolbar__body">
+      <div class="stats-toolbar__left">
         <div class="field">
           <label class="label">Режим</label>
-          <div class="stats-mode-group">
-            <button type="button" id="modeDay" class="btn btn--primary">День</button>
-            <button type="button" id="modePeriod" class="btn btn--secondary">Период</button>
-            <button type="button" id="modeMonth" class="btn btn--secondary">Месяц</button>
+          <div class="stats-scope" id="modeSwitch">
+            <button type="button" id="modeDay" class="is-active">День</button>
+            <button type="button" id="modePeriod">Период</button>
+            <button type="button" id="modeMonth">Месяц</button>
           </div>
         </div>
 
         <div class="field" id="dayField">
           <label class="label" for="dayDate">Дата</label>
-          <input id="dayDate" type="date" />
+          <input id="dayDate" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
         </div>
 
         <div class="field hidden" id="periodFromField">
           <label class="label" for="periodFrom">От</label>
-          <input id="periodFrom" type="date" />
+          <input id="periodFrom" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
         </div>
+
         <div class="field hidden" id="periodToField">
           <label class="label" for="periodTo">До</label>
-          <input id="periodTo" type="date" />
+          <input id="periodTo" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
         </div>
 
         <div class="field hidden" id="monthField">
           <label class="label" for="monthDate">Месяц</label>
-          <input id="monthDate" type="month" />
-        </div>
-
-        <div class="field">
-          <button type="button" id="loadStatsBtn" class="btn btn--primary">Обновить</button>
-        </div>
-        <div class="field">
-          <button type="button" id="downloadReportBtn" class="btn btn--ghost">Сформировать отчёт</button>
+          <input id="monthDate" class="stats-date-input" type="text" placeholder="ГГГГ-ММ">
         </div>
       </div>
-    </div>
-    <div class="card__body">
-      <p id="rangeLabel" class="page-subtitle" style="margin-top: 0;">Диапазон: -</p>
+
+      <div class="stats-toolbar__right">
+        <button type="button" id="loadStatsBtn" class="btn btn--primary">Обновить</button>
+        <button type="button" id="downloadReportBtn" class="btn btn--ghost">Экспорт DOCX</button>
+      </div>
     </div>
   </div>
 
-  <div class="grid grid--3" style="margin-top: 14px;">
+  <div class="stats-meta">
+    <span id="rangeLabel" class="badge">Диапазон: —</span>
+    <span id="statsState" class="badge">Статус: готово</span>
+    <span id="statsUpdated" class="badge">Обновлено: —</span>
+  </div>
+
+  <div class="stats-kpis">
     <div class="kpi">
-      <p class="kpi__label">Уроков на замещение</p>
+      <p class="kpi__label">Всего замещений</p>
       <p id="kpiLessons" class="kpi__value">0</p>
+      <p class="kpi__trend kpi__trend--hide">Относительно прошлых данных: <b id="kpiLessonsTrend">—</b></p>
     </div>
     <div class="kpi">
       <p class="kpi__label">Отсутствующих учителей</p>
       <p id="kpiAbsent" class="kpi__value">0</p>
+      <p class="kpi__trend">Нагрузка периода</p>
     </div>
     <div class="kpi">
       <p class="kpi__label">Задействовано замещающих</p>
       <p id="kpiReplacing" class="kpi__value">0</p>
+      <p class="kpi__trend">Уникальные сотрудники</p>
+    </div>
+    <div class="kpi">
+      <p class="kpi__label">Производственная необходимость</p>
+      <p id="kpiSpecial" class="kpi__value">0</p>
+      <p class="kpi__trend">Вне обычного плана</p>
     </div>
   </div>
 
-  <div class="grid grid--2" style="margin-top: 14px;">
+  <div class="stats-main">
     <div class="card">
       <div class="card__header">
-        <h2 class="card__title">Кто больше всего замещал</h2>
+        <div class="stats-chart-head">
+          <div>
+            <h2 class="card__title">Динамика по дням</h2>
+            <p class="card__subtitle">Количество замен по дням внутри выбранного диапазона</p>
+          </div>
+        </div>
+      </div>
+      <div class="card__body">
+        <div id="dailyChart" class="daily-chart"></div>
+      </div>
+    </div>
+
+    <div class="stats-right">
+      <div class="card">
+        <div class="card__header">
+          <h2 class="card__title">Основные замещения</h2>
+        </div>
+        <div class="card__body donut-wrap">
+          <div class="donut" id="statsDonut">
+            <div class="donut__center">
+              <p id="donutTotal" class="donut__value">0</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__header">
+          <h2 class="card__title">Кратко по периоду</h2>
+        </div>
+        <div class="card__body mini-metrics">
+          <div class="mini-metric">
+            <span class="mini-metric__label">Среднее замен в день</span>
+            <span id="metricAvgPerDay" class="mini-metric__value">0</span>
+          </div>
+          <div class="mini-metric">
+            <span class="mini-metric__label">Пик в один день</span>
+            <span id="metricPeak" class="mini-metric__value">0</span>
+          </div>
+          <div class="mini-metric">
+            <span class="mini-metric__label">Активных дней</span>
+            <span id="metricActiveDays" class="mini-metric__value">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-tables">
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Топ замещающих</h2>
       </div>
       <div class="card__body">
         <div id="topReplacing" class="bars"></div>
@@ -185,7 +565,7 @@
 
     <div class="card">
       <div class="card__header">
-        <h2 class="card__title">Кого чаще замещали</h2>
+        <h2 class="card__title">Кого замещали чаще</h2>
       </div>
       <div class="card__body">
         <div id="topAbsent" class="bars"></div>
@@ -193,26 +573,21 @@
     </div>
   </div>
 
-  <div class="card" style="margin-top: 14px;">
+  <div class="card">
     <div class="card__header">
-      <h2 class="card__title">Динамика по дням</h2>
-    </div>
-    <div class="card__body">
-      <div id="dailyChart" class="daily-chart"></div>
-    </div>
-  </div>
-
-  <div class="card" style="margin-top: 14px;">
-    <div class="card__header">
-      <h2 class="card__title">Общая статистика: сколько всего замещали</h2>
+      <h2 class="card__title">Общая статистика замещающих</h2>
     </div>
     <div class="card__body">
       <div id="allReplacing" class="bars bars--scroll"></div>
     </div>
   </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/index.js"></script>
 <script>
   (function () {
     const today = new Date();
@@ -236,25 +611,77 @@
     const monthDate = document.getElementById('monthDate');
 
     const rangeLabel = document.getElementById('rangeLabel');
+    const statsState = document.getElementById('statsState');
+    const statsUpdated = document.getElementById('statsUpdated');
+
     const kpiLessons = document.getElementById('kpiLessons');
     const kpiAbsent = document.getElementById('kpiAbsent');
     const kpiReplacing = document.getElementById('kpiReplacing');
+    const kpiSpecial = document.getElementById('kpiSpecial');
+    const kpiLessonsTrend = document.getElementById('kpiLessonsTrend');
+
     const topReplacing = document.getElementById('topReplacing');
     const topAbsent = document.getElementById('topAbsent');
     const allReplacing = document.getElementById('allReplacing');
     const dailyChart = document.getElementById('dailyChart');
 
+    const donut = document.getElementById('statsDonut');
+    const donutTotal = document.getElementById('donutTotal');
+
+    const metricAvgPerDay = document.getElementById('metricAvgPerDay');
+    const metricPeak = document.getElementById('metricPeak');
+    const metricActiveDays = document.getElementById('metricActiveDays');
+
     let mode = 'day';
+    let previousTotal = null;
+
     dayDate.value = todayStr;
     periodFrom.value = todayStr;
     periodTo.value = todayStr;
     monthDate.value = monthStr;
 
+    function initDatePickers() {
+      if (!window.flatpickr) return;
+      const localeRu = (window.flatpickr && window.flatpickr.l10ns && window.flatpickr.l10ns.ru) ? window.flatpickr.l10ns.ru : undefined;
+      const common = {
+        locale: localeRu,
+        allowInput: true,
+        disableMobile: true,
+        dateFormat: 'Y-m-d',
+        monthSelectorType: 'static'
+      };
+      const wrapClass = 'stats-fp';
+
+      window.flatpickr(dayDate, Object.assign({}, common, { static: true }));
+      window.flatpickr(periodFrom, Object.assign({}, common, { static: true }));
+      window.flatpickr(periodTo, Object.assign({}, common, { static: true }));
+
+      if (typeof window.monthSelectPlugin === 'function') {
+        window.flatpickr(monthDate, {
+          locale: localeRu,
+          allowInput: true,
+          disableMobile: true,
+          dateFormat: 'Y-m',
+          static: true,
+          plugins: [new window.monthSelectPlugin({
+            shorthand: true,
+            dateFormat: 'Y-m',
+            altFormat: 'F Y'
+          })]
+        });
+      }
+
+      [dayDate, periodFrom, periodTo, monthDate].forEach(function (input) {
+        if (!input || !input._flatpickr || !input._flatpickr.calendarContainer) return;
+        input._flatpickr.calendarContainer.classList.add(wrapClass);
+      });
+    }
+
     function setMode(next) {
       mode = next;
-      modeDayBtn.className = next === 'day' ? 'btn btn--primary' : 'btn btn--secondary';
-      modePeriodBtn.className = next === 'period' ? 'btn btn--primary' : 'btn btn--secondary';
-      modeMonthBtn.className = next === 'month' ? 'btn btn--primary' : 'btn btn--secondary';
+      modeDayBtn.classList.toggle('is-active', next === 'day');
+      modePeriodBtn.classList.toggle('is-active', next === 'period');
+      modeMonthBtn.classList.toggle('is-active', next === 'month');
 
       dayField.classList.toggle('hidden', next !== 'day');
       periodFromField.classList.toggle('hidden', next !== 'period');
@@ -268,6 +695,19 @@
         container.innerHTML = '<p class="page-subtitle" style="margin:0;">' + emptyText + '</p>';
         return;
       }
+
+      const animalAvatars = ['🦊', '🐼', '🦉', '🐯', '🦁', '🐻', '🐨', '🐸', '🐬', '🦄', '🐧', '🦋', '🐿️', '🦝', '🐢', '🦔'];
+      const pickAnimal = function (name) {
+        const source = String(name || 'teacher');
+        let hash = 0;
+        for (let i = 0; i < source.length; i += 1) {
+          hash = ((hash << 5) - hash) + source.charCodeAt(i);
+          hash |= 0;
+        }
+        const idx = Math.abs(hash) % animalAvatars.length;
+        return animalAvatars[idx];
+      };
+
       rows.forEach(function (row) {
         const hasSplit = typeof row.regular_count !== 'undefined' || typeof row.special_count !== 'undefined';
         const regularCount = hasSplit ? (row.regular_count || 0) : 0;
@@ -275,39 +715,86 @@
         const valueText = hasSplit
           ? (specialCount > 0 ? (regularCount + '+' + specialCount) : String(regularCount))
           : (row.count || 0);
+
+        const teacherName = row.teacher || '-';
         const r = document.createElement('div');
         r.className = 'bar-row';
-        r.innerHTML = ''
-          + '<div class="bar-label" title="' + (row.teacher || '') + '">' + (row.teacher || '-') + '</div>'
-          + '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(0, Math.min(100, row.share || 0)) + '%"></div></div>'
-          + '<div class="bar-value">' + valueText + '</div>';
+
+        const label = document.createElement('div');
+        label.className = 'bar-label';
+        label.title = teacherName;
+
+        const avatar = document.createElement('span');
+        avatar.className = 'bar-label__avatar';
+        avatar.textContent = row.icon || '👤';
+        avatar.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = 'bar-label__text';
+        text.textContent = teacherName;
+
+        label.appendChild(avatar);
+        label.appendChild(text);
+
+        const track = document.createElement('div');
+        track.className = 'bar-track';
+        const fill = document.createElement('div');
+        fill.className = 'bar-fill';
+        fill.style.width = Math.max(0, Math.min(100, row.share || 0)) + '%';
+        track.appendChild(fill);
+
+        const value = document.createElement('div');
+        value.className = 'bar-value';
+        value.textContent = String(valueText);
+
+        r.appendChild(label);
+        r.appendChild(track);
+        r.appendChild(value);
         container.appendChild(r);
       });
     }
 
     function renderDaily(rows) {
       dailyChart.innerHTML = '';
-      if (!rows || !rows.length) {
+      const scopedRows = Array.isArray(rows) ? rows.slice(-31) : [];
+      if (!scopedRows.length) {
         dailyChart.innerHTML = '<p class="page-subtitle" style="margin:0;">Нет данных</p>';
         return;
       }
-      const max = rows.reduce(function (acc, item) {
+      const max = scopedRows.reduce(function (acc, item) {
         return Math.max(acc, item.count || 0);
       }, 0);
-      rows.forEach(function (item) {
+      scopedRows.forEach(function (item) {
         const col = document.createElement('div');
         col.className = 'daily-col';
-        const h = max > 0 ? Math.max(2, Math.round(((item.count || 0) / max) * 150)) : 2;
+        const h = max > 0 ? Math.max(2, Math.round(((item.count || 0) / max) * 170)) : 2;
         const tip = 'Замещений: ' + (item.count || 0)
           + ' | Отсутствующих: ' + (item.absent_teachers || 0)
           + ' | Замещающих: ' + (item.replacement_teachers || 0)
-          + ' | Обычные (вкл. отдельные): ' + (item.regular_replacements || 0)
+          + ' | Обычные: ' + (item.regular_replacements || 0)
           + ' | Производственная необходимость: ' + (item.special_replacements || 0);
         col.innerHTML = ''
           + '<div class="daily-col__bar" style="height:' + h + 'px" title="' + tip + '"></div>'
           + '<div class="daily-col__lbl">' + (item.label || '') + '</div>';
         dailyChart.appendChild(col);
       });
+    }
+
+    function updateDonut(regular) {
+      donut.style.background = 'conic-gradient(#0f5cd6 0deg, #0f5cd6 360deg)';
+      donutTotal.textContent = String(regular || 0);
+    }
+
+    function updateMetrics(dailyRows) {
+      const rows = Array.isArray(dailyRows) ? dailyRows : [];
+      const sum = rows.reduce((acc, x) => acc + (x.count || 0), 0);
+      const active = rows.filter((x) => (x.count || 0) > 0).length;
+      const peak = rows.reduce((acc, x) => Math.max(acc, x.count || 0), 0);
+      const avg = rows.length ? (sum / rows.length) : 0;
+
+      metricAvgPerDay.textContent = avg.toFixed(1);
+      metricPeak.textContent = String(peak);
+      metricActiveDays.textContent = String(active);
     }
 
     function buildRangeParams() {
@@ -389,6 +876,7 @@
 
     async function downloadReports() {
       reportBtn.disabled = true;
+      reportBtn.textContent = 'Формирование...';
       try {
         const params = buildRangeParams();
         const names = fallbackReportNames();
@@ -404,41 +892,58 @@
         }
       } finally {
         reportBtn.disabled = false;
+        reportBtn.textContent = 'Экспорт DOCX';
       }
     }
 
     async function loadStats() {
       loadBtn.disabled = true;
+      loadBtn.textContent = 'Обновляем...';
+      statsState.textContent = 'Статус: загрузка';
       try {
         const params = buildRangeParams();
-
         const resp = await fetch('/replacements/api/stats/?' + params.toString(), { credentials: 'same-origin' });
         const data = await resp.json();
         if (!resp.ok) {
           throw new Error(data.error || 'Ошибка загрузки статистики');
         }
 
-        rangeLabel.textContent = data.range && data.range.label ? data.range.label : 'Диапазон: -';
-        const regularLessons = (data.totals && data.totals.regular_replacements) || 0;
-        const extraLessons = (data.totals && data.totals.special_replacements) || 0;
-        const totalLessons = (data.totals && data.totals.replacement_lessons) || (regularLessons + extraLessons);
-        kpiLessons.textContent = extraLessons > 0
-          ? (regularLessons + ' обычных (вкл. отдельные), ' + extraLessons + ' по производственной необходимости')
-          : (regularLessons + ' обычных (вкл. отдельные)');
-        kpiLessons.title = 'Обычные (вкл. отдельные): ' + regularLessons + ', по производственной необходимости: ' + extraLessons + ', итого: ' + totalLessons;
-        kpiAbsent.textContent = (data.totals && data.totals.absent_teachers) || 0;
-        kpiReplacing.textContent = (data.totals && data.totals.replacement_teachers) || 0;
+        const totals = data.totals || {};
+        const regularLessons = totals.regular_replacements || 0;
+        const specialLessons = totals.special_replacements || 0;
+        const totalLessons = totals.replacement_lessons || (regularLessons + specialLessons);
 
-        renderBars(topReplacing, data.top_replacing_teachers || [], 'Нет замещений за выбранный период');
-        renderBars(topAbsent, data.top_absent_teachers || [], 'Нет отсутствующих за выбранный период');
-        renderBars(allReplacing, data.all_replacing_teachers || [], 'Нет данных по замещающим за выбранный период');
+        rangeLabel.textContent = (data.range && data.range.label) ? data.range.label : 'Диапазон: —';
+        kpiLessons.textContent = totalLessons;
+        kpiAbsent.textContent = totals.absent_teachers || 0;
+        kpiReplacing.textContent = totals.replacement_teachers || 0;
+        kpiSpecial.textContent = specialLessons;
+
+        if (previousTotal === null || previousTotal === 0) {
+          kpiLessonsTrend.textContent = '—';
+        } else {
+          const pct = Math.round(((totalLessons - previousTotal) / previousTotal) * 100);
+          kpiLessonsTrend.textContent = (pct >= 0 ? '+' : '') + pct + '%';
+        }
+        previousTotal = totalLessons;
+
+        renderBars(topReplacing, data.top_replacing_teachers || [], 'Нет данных за выбранный период');
+        renderBars(topAbsent, data.top_absent_teachers || [], 'Нет данных за выбранный период');
+        renderBars(allReplacing, data.all_replacing_teachers || [], 'Нет данных за выбранный период');
         renderDaily(data.daily || []);
+        updateDonut(regularLessons);
+        updateMetrics(data.daily || []);
+
+        statsState.textContent = 'Статус: готово';
+        statsUpdated.textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       } catch (err) {
+        statsState.textContent = 'Статус: ошибка';
         if (window.AppUI && typeof window.AppUI.toast === 'function') {
           window.AppUI.toast(err.message || 'Ошибка', 'danger');
         }
       } finally {
         loadBtn.disabled = false;
+        loadBtn.textContent = 'Обновить';
       }
     }
 
@@ -448,9 +953,9 @@
     loadBtn.addEventListener('click', loadStats);
     reportBtn.addEventListener('click', downloadReports);
 
+    initDatePickers();
     setMode('day');
     loadStats();
   })();
 </script>
 {% endblock %}
-

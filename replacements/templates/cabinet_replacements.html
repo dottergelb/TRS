@@ -31,7 +31,11 @@
         </div>
         <div class="repl-toolbar__actions">
           <button class="btn btn--primary" id="loadLessonsBtn" onclick="loadLessons()">📄 Показать уроки</button>
+          {% if not user.is_guest %}
           <button class="btn btn--secondary" id="saveButton" onclick="saveReplacements()">💾 Сохранить</button>
+          {% else %}
+          <span class="badge">Режим гостя: только просмотр</span>
+          {% endif %}
           <button class="btn btn--ghost" onclick="exportDoc()">📥 Экспорт в DOCX</button>
         </div>
       </div>

@@ -7,6 +7,79 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
     <style>
+        .repl-toolbar {
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94));
+            box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+        }
+        .repl-toolbar .card__body {
+            gap: 12px;
+        }
+        .repl-toolbar .field {
+            background: rgba(15, 118, 110, 0.06);
+            border: 1px solid rgba(15, 118, 110, 0.14);
+            border-radius: 14px;
+            padding: 10px 12px;
+        }
+        #datePicker {
+            height: 40px;
+            font-weight: 700;
+        }
+        .flatpickr-calendar {
+            border-radius: 16px;
+            border: 1px solid rgba(15, 23, 42, 0.14);
+            box-shadow: 0 22px 46px rgba(15, 23, 42, 0.2);
+            background: #fff;
+        }
+        .flatpickr-current-month {
+            font-size: 15px;
+            font-weight: 900;
+            color: #0f172a;
+        }
+        .flatpickr-weekday {
+            color: #64748b;
+            font-weight: 800;
+            font-size: 12px;
+        }
+        .flatpickr-day {
+            border-radius: 10px;
+            font-weight: 700;
+            color: #1f2937;
+            position: relative;
+        }
+        .flatpickr-day.today {
+            border-color: rgba(14, 116, 144, 0.42);
+        }
+        .flatpickr-day.selected,
+        .flatpickr-day.startRange,
+        .flatpickr-day.endRange {
+            background: linear-gradient(135deg, #0f5cd6, #0f766e);
+            border-color: transparent;
+            color: #fff;
+        }
+        .flatpickr-day:hover {
+            background: rgba(15, 92, 214, 0.14);
+            border-color: rgba(15, 92, 214, 0.28);
+        }
+        .flatpickr-day.has-replacements:not(.selected) {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.32);
+        }
+        .flatpickr-day.has-replacements:not(.selected)::after {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #0f766e;
+            position: absolute;
+            bottom: 4px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .flatpickr-calendar.arrowTop:before,
+        .flatpickr-calendar.arrowTop:after {
+            display: none;
+        }
         .repl-special__title { font-weight: 700; margin-bottom: 8px; }
         .repl-special__list { display: grid; gap: 8px; }
         .repl-special__item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 10px; }
@@ -41,11 +114,18 @@
         </div>
 
         <div class="repl-toolbar__actions">
+          {% if not user.is_guest %}
           <button class="btn btn--secondary" onclick="clearAll()">❌ Очистить все</button>
           <button class="btn btn--primary" onclick="addAnotherTeacher()">➕ Добавить учителя</button>
           <button class="btn btn--secondary" onclick="openSpecialReplacementModal()">➕ Добавить урок</button>
           <button class="btn btn--secondary" onclick="triggerDocxImport()">📤 Импорт DOCX</button>
+          {% if user.is_superuser or user.is_admin %}
+          <button class="btn btn--secondary" onclick="notifyEmployeesForDate()">🔔 Оповещение сотрудников</button>
+          {% endif %}
           <button class="btn btn--primary" id="saveButton" onclick="saveReplacements()">💾 Сохранить все</button>
+          {% else %}
+          <span class="badge">Режим гостя: только просмотр</span>
+          {% endif %}
           <button class="btn btn--ghost" onclick="exportToDoc()">📥 Экспорт в DOCX</button>
           <input type="file" id="docxImportInput" accept=".docx" style="display:none">
         </div>
@@ -152,6 +232,43 @@
             if (!input) return;
             input.value = '';
             input.click();
+        }
+
+        async function notifyEmployeesForDate() {
+            if (!state.selectedDate) {
+                AppUI.toast('Сначала выберите дату в календаре.', 'warning');
+                return;
+            }
+            try {
+                const previewRes = await fetch(`/comm/api/notifications/preview/?date=${encodeURIComponent(state.selectedDate)}`, {credentials: 'same-origin'});
+                const preview = await previewRes.json();
+                if (!previewRes.ok) throw new Error(preview.error || 'Не удалось собрать предпросмотр');
+
+                const total = Number(preview.teachers_count || 0);
+                const withUsers = Number(preview.teachers_with_user || 0);
+                const text = `Дата: ${state.selectedDate}\nПолучателей по заменам: ${total}\nНайдено пользователей: ${withUsers}\n\nОтправить уведомления?`;
+                const ok = await Swal.fire({
+                    title: 'Оповещение сотрудников',
+                    text,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Отправить',
+                    cancelButtonText: 'Отмена'
+                });
+                if (!ok.isConfirmed) return;
+
+                const sendRes = await fetch('/comm/api/notifications/send/', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({date: state.selectedDate})
+                });
+                const sent = await sendRes.json();
+                if (!sendRes.ok) throw new Error(sent.error || 'Ошибка отправки');
+                AppUI.toast(`Отправлено: ${sent.created_notifications}, пропущено без пользователя: ${sent.skipped_without_user}.`, 'success');
+            } catch (e) {
+                AppUI.toast(e.message || 'Ошибка отправки уведомлений', 'danger');
+            }
         }
 
         async function importReplacementsDocx(file) {
@@ -303,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.flatpickr) {
         datePickerFp = window.flatpickr(dp, {
             dateFormat: "Y-m-d",
+            locale: { firstDayOfWeek: 1 },
             allowInput: true,
             disableMobile: true,
             onDayCreate: function(dObj, dStr, fp, dayElem) {

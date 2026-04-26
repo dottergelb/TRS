@@ -7,6 +7,7 @@ from .views import (
     user_list_view,
     user_edit_view,
     user_delete_view,
+    export_teacher_credentials_view,
 )
 
                                                              
@@ -18,6 +19,7 @@ urlpatterns = [
     path('logout/', logout_view, name='logout'),
                                         
     path('users/', user_list_view, name='user_list'),
+    path('users/export-teacher-credentials/', export_teacher_credentials_view, name='export_teacher_credentials'),
     path('users/<int:user_id>/edit/', user_edit_view, name='user_edit'),
     path('users/<int:user_id>/delete/', user_delete_view, name='user_delete'),
 ]

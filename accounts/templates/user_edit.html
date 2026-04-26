@@ -4,8 +4,14 @@
 
 {% block content %}
   <h1>Редактирование пользователя {{ user_obj.username }}</h1>
-  <form method="post" class="form" style="max-width:600px;">
+  <form method="post" class="form" style="max-width:680px;">
     {% csrf_token %}
+
+    <div class="form-group">
+      <label>Логин</label>
+      <input type="text" value="{{ user_obj.username }}" readonly>
+    </div>
+
     <div class="form-group">
       <label for="id_full_name">ФИО</label>
       {{ form.full_name }}
@@ -13,43 +19,72 @@
 
     <div class="form-group">
       <label for="id_password">Пароль</label>
-      {{ form.password }}
+      <div style="display:flex; gap:8px; align-items:center;">
+        {{ form.password }}
+        <button type="button" class="btn btn--ghost btn--sm" id="togglePasswordBtn">Показать</button>
+      </div>
       <small class="form-text text-muted">Оставьте поле пустым, чтобы не менять пароль</small>
     </div>
 
     <fieldset class="form-group">
-      <legend>Доступы</legend>
-      <div class="form-check">
-        {{ form.can_calendar }}
-        <label class="form-check-label" for="id_can_calendar">Календарь</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_teachers }}
-        <label class="form-check-label" for="id_can_teachers">Учителя</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_editor }}
-        <label class="form-check-label" for="id_can_editor">Редактор</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_upload }}
-        <label class="form-check-label" for="id_can_upload">Загрузка</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_logs }}
-        <label class="form-check-label" for="id_can_logs">Логи</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_calls }}
-        <label class="form-check-label" for="id_can_calls">Звонки</label>
-      </div>
-      <div class="form-check">
-        {{ form.can_users }}
-        <label class="form-check-label" for="id_can_users">Пользователи</label>
-      </div>
+      <legend>Роль</legend>
+      {{ form.role }}
+      {% if form.role.help_text %}<small class="form-text text-muted">{{ form.role.help_text }}</small>{% endif %}
+    </fieldset>
+
+    <fieldset class="form-group">
+      <legend>Доступ</legend>
+      <div class="form-check">{{ form.can_calendar }} <label for="id_can_calendar">Календарь</label></div>
+      <div class="form-check">{{ form.can_teachers }} <label for="id_can_teachers">Учителя</label></div>
+      <div class="form-check">{{ form.can_editor }} <label for="id_can_editor">Редактор</label></div>
+      <div class="form-check">{{ form.can_upload }} <label for="id_can_upload">Загрузка</label></div>
+      <div class="form-check">{{ form.can_logs }} <label for="id_can_logs">Логи</label></div>
+      <div class="form-check">{{ form.can_calls }} <label for="id_can_calls">Звонки</label></div>
+      <div class="form-check">{{ form.can_users }} <label for="id_can_users">Пользователи</label></div>
     </fieldset>
 
     <button type="submit" class="btn btn--primary">Сохранить</button>
     <a href="{% url 'accounts:user_list' %}" class="btn btn--secondary">Отмена</a>
   </form>
+{% endblock %}
+
+{% block extra_js %}
+  <script>
+    (function () {
+      const role = document.getElementById('id_role');
+      if (!role) return;
+      const accessIds = [
+        'id_can_calendar',
+        'id_can_teachers',
+        'id_can_editor',
+        'id_can_upload',
+        'id_can_logs',
+        'id_can_calls',
+        'id_can_users'
+      ];
+      const fields = accessIds.map((id) => document.getElementById(id)).filter(Boolean);
+      const passwordInput = document.getElementById('id_password');
+      const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+
+      const lockRoles = new Set(['admin', 'teacher', 'guest']);
+      const syncByRole = () => {
+        const lock = lockRoles.has(role.value);
+        fields.forEach((field) => {
+          if (lock) field.checked = false;
+          field.disabled = lock;
+        });
+      };
+
+      role.addEventListener('change', syncByRole);
+      syncByRole();
+
+      if (passwordInput && togglePasswordBtn) {
+        togglePasswordBtn.addEventListener('click', function () {
+          const isHidden = passwordInput.type === 'password';
+          passwordInput.type = isHidden ? 'text' : 'password';
+          togglePasswordBtn.textContent = isHidden ? 'Скрыть' : 'Показать';
+        });
+      }
+    })();
+  </script>
 {% endblock %}

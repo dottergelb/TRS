@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+{% load user_icons %}
+
+{% block title %}Сообщения{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block content %}
+  <div
+    id="chatPage"
+    data-chat-state-url="{% url 'communications:chats_state_api' %}"
+    data-chat-read-all-url="{% url 'communications:chats_read_all_api' %}"
+    data-selected-user-id="{% if selected_user %}{{ selected_user.id }}{% endif %}"
+    data-chats-with-template="{% url 'communications:chats_with' 0 %}"
+    data-system-user-id="{{ system_user_id }}"
+  >
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Сообщения</h1>
+        <p class="page-subtitle">Диалоги и системные сообщения</p>
+      </div>
+    </div>
+
+    <div class="chat-layout">
+      <div class="card chat-sidebar-card">
+        <div class="card__body">
+          <div class="row" style="justify-content:space-between; align-items:center;">
+            <h3 style="margin:0;">Диалоги</h3>
+            <button
+              id="markAllReadBtn"
+              class="btn btn--ghost btn--sm"
+              type="button"
+              {% if not unread_total %}style="display:none;"{% endif %}
+            >
+              Прочитать все
+            </button>
+          </div>
+          <div id="dialogsList" class="chat-list">
+            {% for d in dialogs %}
+              <a class="btn chat-dialog-btn {% if selected_user and selected_user.id == d.user.id %}btn--primary{% else %}btn--secondary{% endif %}" href="{% url 'communications:chats_with' d.user.id %}">
+                <span class="chat-dialog-btn__name">{{ d.user|user_icon }} {{ d.user.full_name|default:d.user.username }}</span>
+                {% if d.unread_count %}<span class="badge">{{ d.unread_count }}</span>{% endif %}
+              </a>
+            {% empty %}
+              <p class="page-subtitle">Пока нет диалогов.</p>
+            {% endfor %}
+          </div>
+
+          <hr>
+          <h4>Новый диалог</h4>
+          <div id="usersList" class="chat-list chat-list--compact">
+            {% for u in users %}
+              <a class="btn btn--ghost chat-dialog-btn" href="{% url 'communications:chats_with' u.id %}">
+                <span class="chat-dialog-btn__name">{{ u|user_icon }} {{ u.full_name|default:u.username }}</span>
+              </a>
+            {% empty %}
+              <p class="page-subtitle">Нет доступных пользователей.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card chat-thread-card">
+        <div class="card__body">
+          {% if selected_user %}
+            <h3 id="threadTitle">Диалог: {{ selected_user|user_icon }} {{ selected_user.full_name|default:selected_user.username }}</h3>
+            <div id="threadBox" class="chat-thread">
+              {% for m in thread %}
+                {% with notif=m.system_notification ticket=m.system_notification.tickets.first %}
+                  <div class="chat-msg {% if m.sender_id == request.user.id %}chat-msg--mine{% else %}chat-msg--other{% endif %}">
+                    <div class="chat-msg__meta">
+                      {% ifchanged m.created_at|date:"d.m.Y H:i" %}
+                        <span class="muted">{{ m.created_at|date:"d.m.Y H:i" }}</span>
+                      {% endifchanged %}
+                    </div>
+                    <div class="chat-msg__bubble
+                      {% if notif and notif.status == 'acknowledged' %}chat-msg__bubble--notif-ok{% endif %}
+                      {% if notif and notif.status == 'question' and ticket and ticket.status == 'open' %}chat-msg__bubble--notif-alert{% endif %}
+                      {% if notif and notif.status == 'question' and ticket and ticket.status == 'closed' %}chat-msg__bubble--notif-closed{% endif %}
+                    ">
+                      {% if m.message_type == 'system' %}<span class="badge">Система</span>{% endif %}
+                      {% if m.text %}
+                        <div class="chat-msg__text">{{ m.text|linebreaksbr }}</div>
+                      {% endif %}
+                      {% if m.attachment %}
+                        {% if m.is_image_attachment %}
+                          <a class="chat-attachment chat-attachment--image" href="{{ m.attachment.url }}" target="_blank" rel="noopener">
+                            <img src="{{ m.attachment.url }}" alt="{{ m.safe_attachment_name }}">
+                          </a>
+                        {% else %}
+                          <a class="chat-attachment" href="{{ m.attachment.url }}" target="_blank" rel="noopener">
+                            📎 {{ m.safe_attachment_name|default:"Файл" }}
+                          </a>
+                        {% endif %}
+                      {% endif %}
+
+                      {% if notif and selected_user.id == system_user_id and not is_admin %}
+                        <div class="chat-msg__notif-controls">
+                          {% if notif.status == 'acknowledged' %}
+                            <span class="badge badge--ok">Ознакомлен</span>
+                          {% elif notif.status == 'question' and ticket and ticket.status == 'open' %}
+                            <span class="badge badge--warn">Есть вопросы · тикет открыт</span>
+                            <a class="btn btn--secondary btn--sm" href="{% url 'communications:ticket_detail' ticket.id %}">Открыть тикет</a>
+                          {% elif notif.status == 'question' and ticket and ticket.status == 'closed' %}
+                            <span class="badge">Есть вопросы · тикет закрыт</span>
+                            <a class="btn btn--secondary btn--sm" href="{% url 'communications:ticket_detail' ticket.id %}">Открыть тикет</a>
+                          {% elif notif.status == 'created' or notif.status == 'read' %}
+                            <form method="post" action="{% url 'communications:notification_ack' notif.id %}">
+                              {% csrf_token %}
+                              <button class="btn btn--primary btn--sm" type="submit">Ознакомлен</button>
+                            </form>
+                            <details>
+                              <summary class="btn btn--secondary btn--sm">Есть вопросы</summary>
+                              <form method="post" action="{% url 'communications:notification_question' notif.id %}" style="margin-top:8px;">
+                                {% csrf_token %}
+                                <div class="field">{{ question_form.subject.label_tag }}{{ question_form.subject }}</div>
+                                <div class="field" style="margin-top:8px;">{{ question_form.text.label_tag }}{{ question_form.text }}</div>
+                                <button class="btn btn--primary btn--sm" type="submit" style="margin-top:8px;">Открыть тикет</button>
+                              </form>
+                            </details>
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    </div>
+                  </div>
+                {% endwith %}
+              {% empty %}
+                <p class="page-subtitle">Нет сообщений.</p>
+              {% endfor %}
+            </div>
+
+            {% if selected_user.id == system_user_id %}
+              <p id="systemReplyHint" class="page-subtitle" style="margin-top:8px;">Ответ системному аккаунту запрещён.</p>
+            {% else %}
+              <p id="systemReplyHint" class="page-subtitle" style="margin-top:8px; display:none;">Ответ системному аккаунту запрещён.</p>
+              <form id="chatForm" method="post" enctype="multipart/form-data" style="margin-top:12px;">
+                {% csrf_token %}
+                <div class="chat-compose-tools">
+                  <button id="emojiToggleBtn" class="btn btn--ghost btn--sm" type="button">😊 Эмодзи</button>
+                  <label for="chatAttachmentInput" class="btn btn--ghost btn--sm chat-file-btn">📎 Файл</label>
+                </div>
+                <div id="emojiPanel" class="chat-emoji-panel" style="display:none;"></div>
+                {{ form.text }}
+                <input id="chatAttachmentInput" name="attachment" type="file" style="display:none;">
+                <div id="chatAttachmentPreview" class="chat-attachment-preview" style="display:none;"></div>
+                <button class="btn btn--primary" type="submit" style="margin-top:8px;">Отправить</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <h3 id="threadTitle">Переписка</h3>
+            <div id="threadBox" class="chat-thread chat-thread--empty">
+              <p class="page-subtitle">Выберите диалог слева.</p>
+            </div>
+            <p id="systemReplyHint" class="page-subtitle" style="margin-top:8px; display:none;">Ответ системному аккаунту запрещён.</p>
+            <form id="chatForm" method="post" enctype="multipart/form-data" style="margin-top:12px; display:none;">
+              {% csrf_token %}
+              <div class="chat-compose-tools">
+                <button id="emojiToggleBtn" class="btn btn--ghost btn--sm" type="button">😊 Эмодзи</button>
+                <label for="chatAttachmentInput" class="btn btn--ghost btn--sm chat-file-btn">📎 Файл</label>
+              </div>
+              <div id="emojiPanel" class="chat-emoji-panel" style="display:none;"></div>
+              {{ form.text }}
+              <input id="chatAttachmentInput" name="attachment" type="file" style="display:none;">
+              <div id="chatAttachmentPreview" class="chat-attachment-preview" style="display:none;"></div>
+              <button class="btn btn--primary" type="submit" style="margin-top:8px;">Отправить</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+  <script>
+    (function () {
+      const root = document.getElementById('chatPage');
+      if (!root) return;
+
+      const stateUrl = root.dataset.chatStateUrl || '';
+      const readAllUrl = root.dataset.chatReadAllUrl || '';
+      const selectedUserId = Number(root.dataset.selectedUserId || 0);
+      const chatsWithTemplate = root.dataset.chatsWithTemplate || '';
+      const systemUserId = Number(root.dataset.systemUserId || 0);
+
+      const dialogsList = document.getElementById('dialogsList');
+      const usersList = document.getElementById('usersList');
+      const threadBox = document.getElementById('threadBox');
+      const threadTitle = document.getElementById('threadTitle');
+      const chatForm = document.getElementById('chatForm');
+      const systemReplyHint = document.getElementById('systemReplyHint');
+      const markAllReadBtn = document.getElementById('markAllReadBtn');
+      const messageInput = chatForm ? chatForm.querySelector('textarea[name="text"]') : null;
+      const attachmentInput = document.getElementById('chatAttachmentInput');
+      const attachmentPreview = document.getElementById('chatAttachmentPreview');
+      const emojiToggleBtn = document.getElementById('emojiToggleBtn');
+      const emojiPanel = document.getElementById('emojiPanel');
+      let prevLastIncomingMessageId = null;
+      const emojiSet = ['😀', '😄', '😉', '😊', '👍', '🙏', '🔥', '🎯', '📌', '✅', '❗', '❓'];
+
+      function chatUrl(userId) {
+        return chatsWithTemplate.replace('/0/', '/' + userId + '/');
+      }
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return '';
+      }
+
+      function renderAttachmentPreview(file) {
+        if (!attachmentPreview) return;
+        if (!file) {
+          attachmentPreview.innerHTML = '';
+          attachmentPreview.style.display = 'none';
+          return;
+        }
+
+        attachmentPreview.style.display = '';
+        attachmentPreview.innerHTML = '';
+        const title = el('div', 'chat-attachment-preview__name', file.name || 'Файл');
+        attachmentPreview.appendChild(title);
+
+        if ((file.type || '').startsWith('image/')) {
+          const img = el('img', 'chat-attachment-preview__img');
+          img.alt = file.name || 'image';
+          img.src = URL.createObjectURL(file);
+          img.addEventListener('load', () => URL.revokeObjectURL(img.src), { once: true });
+          attachmentPreview.appendChild(img);
+        }
+      }
+
+      function initComposerControls() {
+        if (attachmentInput) {
+          attachmentInput.addEventListener('change', () => {
+            renderAttachmentPreview(attachmentInput.files && attachmentInput.files[0] ? attachmentInput.files[0] : null);
+          });
+        }
+
+        if (emojiPanel && emojiSet.length) {
+          emojiPanel.innerHTML = '';
+          emojiSet.forEach((emojiValue) => {
+            const btn = el('button', 'chat-emoji-btn', emojiValue);
+            btn.type = 'button';
+            btn.addEventListener('click', () => {
+              if (!messageInput) return;
+              const start = messageInput.selectionStart || 0;
+              const end = messageInput.selectionEnd || 0;
+              const current = messageInput.value || '';
+              messageInput.value = current.slice(0, start) + emojiValue + current.slice(end);
+              const caret = start + emojiValue.length;
+              messageInput.focus();
+              messageInput.setSelectionRange(caret, caret);
+            });
+            emojiPanel.appendChild(btn);
+          });
+        }
+
+        if (emojiToggleBtn && emojiPanel) {
+          emojiToggleBtn.addEventListener('click', () => {
+            emojiPanel.style.display = emojiPanel.style.display === 'none' ? '' : 'none';
+          });
+        }
+      }
+
+      function renderDialogs(dialogs) {
+        if (!dialogsList) return;
+        dialogsList.innerHTML = '';
+        if (!dialogs.length) {
+          dialogsList.appendChild(el('p', 'page-subtitle', 'Пока нет диалогов.'));
+          return;
+        }
+        dialogs.forEach((dialog) => {
+          const a = el('a', 'btn chat-dialog-btn');
+          a.href = chatUrl(dialog.user_id);
+          a.classList.add(dialog.user_id === selectedUserId ? 'btn--primary' : 'btn--secondary');
+          a.appendChild(el('span', 'chat-dialog-btn__name', (dialog.icon || '👤') + ' ' + (dialog.display_name || 'Пользователь')));
+          const unread = Number(dialog.unread_count) || 0;
+          if (unread > 0) a.appendChild(el('span', 'badge', unread > 99 ? '99+' : String(unread)));
+          dialogsList.appendChild(a);
+        });
+      }
+
+      function updateReadAllButton(unreadTotal) {
+        if (!markAllReadBtn) return;
+        markAllReadBtn.style.display = (Number(unreadTotal) || 0) > 0 ? '' : 'none';
+      }
+
+      function renderUsers(users) {
+        if (!usersList) return;
+        usersList.innerHTML = '';
+        if (!users.length) {
+          usersList.appendChild(el('p', 'page-subtitle', 'Нет доступных пользователей.'));
+          return;
+        }
+        users.forEach((user) => {
+          const a = el('a', 'btn btn--ghost chat-dialog-btn');
+          a.href = chatUrl(user.id);
+          a.appendChild(el('span', 'chat-dialog-btn__name', (user.icon || '👤') + ' ' + (user.display_name || 'Пользователь')));
+          usersList.appendChild(a);
+        });
+      }
+
+      function notificationBubbleClass(state) {
+        if (state === 'ack') return 'chat-msg__bubble chat-msg__bubble--notif-ok';
+        if (state === 'question_open') return 'chat-msg__bubble chat-msg__bubble--notif-alert';
+        if (state === 'question_closed') return 'chat-msg__bubble chat-msg__bubble--notif-closed';
+        return 'chat-msg__bubble';
+      }
+
+      function appendNotificationControls(bubble, msg, isSystemDialog) {
+        if (!msg.notification_id || !isSystemDialog) return;
+        const box = el('div', 'chat-msg__notif-controls');
+        if (msg.notification_state === 'ack') {
+          box.appendChild(el('span', 'badge badge--ok', 'Ознакомлен'));
+        } else if (msg.notification_state === 'question_open') {
+          box.appendChild(el('span', 'badge badge--warn', 'Есть вопросы · тикет открыт'));
+          if (msg.notification_ticket_url) {
+            const a = el('a', 'btn btn--secondary btn--sm', 'Открыть тикет');
+            a.href = msg.notification_ticket_url;
+            box.appendChild(a);
+          }
+        } else if (msg.notification_state === 'question_closed') {
+          box.appendChild(el('span', 'badge', 'Есть вопросы · тикет закрыт'));
+          if (msg.notification_ticket_url) {
+            const a = el('a', 'btn btn--secondary btn--sm', 'Открыть тикет');
+            a.href = msg.notification_ticket_url;
+            box.appendChild(a);
+          }
+        } else if (msg.notification_can_act) {
+          const ackForm = el('form', '');
+          ackForm.method = 'post';
+          ackForm.action = msg.notification_ack_url;
+          const csrf = el('input', '');
+          csrf.type = 'hidden';
+          csrf.name = 'csrfmiddlewaretoken';
+          csrf.value = getCookie('csrftoken');
+          ackForm.appendChild(csrf);
+          const ackBtn = el('button', 'btn btn--primary btn--sm', 'Ознакомлен');
+          ackBtn.type = 'submit';
+          ackForm.appendChild(ackBtn);
+          box.appendChild(ackForm);
+
+          const details = el('details', '');
+          const summary = el('summary', 'btn btn--secondary btn--sm', 'Есть вопросы');
+          details.appendChild(summary);
+
+          const qForm = el('form', '');
+          qForm.method = 'post';
+          qForm.action = msg.notification_question_url;
+          qForm.style.marginTop = '8px';
+          const csrf2 = el('input', '');
+          csrf2.type = 'hidden';
+          csrf2.name = 'csrfmiddlewaretoken';
+          csrf2.value = getCookie('csrftoken');
+          qForm.appendChild(csrf2);
+
+          const subjectLabel = el('label', 'label', 'Проблема');
+          const subjectInput = el('input', '');
+          subjectInput.type = 'text';
+          subjectInput.name = 'subject';
+          subjectInput.placeholder = 'Проблема';
+          qForm.appendChild(subjectLabel);
+          qForm.appendChild(subjectInput);
+
+          const textLabel = el('label', 'label', 'Опишите проблему');
+          textLabel.style.marginTop = '8px';
+          const textArea = el('textarea', '');
+          textArea.name = 'text';
+          textArea.rows = 4;
+          textArea.placeholder = 'Опишите проблему';
+          qForm.appendChild(textLabel);
+          qForm.appendChild(textArea);
+
+          const qBtn = el('button', 'btn btn--primary btn--sm', 'Открыть тикет');
+          qBtn.type = 'submit';
+          qBtn.style.marginTop = '8px';
+          qForm.appendChild(qBtn);
+          details.appendChild(qForm);
+          box.appendChild(details);
+        }
+        bubble.appendChild(box);
+      }
+
+      function renderThread(payload) {
+        if (!threadBox || !threadTitle) return;
+        if (!payload.selected_user) {
+          threadTitle.textContent = 'Переписка';
+          threadBox.classList.add('chat-thread--empty');
+          threadBox.innerHTML = '';
+          threadBox.appendChild(el('p', 'page-subtitle', 'Выберите диалог слева.'));
+          if (chatForm) chatForm.style.display = 'none';
+          if (systemReplyHint) systemReplyHint.style.display = 'none';
+          prevLastIncomingMessageId = null;
+          return;
+        }
+
+        const isSystemDialog = !!payload.selected_user.is_system_account || payload.selected_user.id === systemUserId;
+        threadTitle.textContent = 'Диалог: ' + (payload.selected_user.icon || '👤') + ' ' + (payload.selected_user.display_name || 'Пользователь');
+        const shouldAutoScroll = (threadBox.scrollHeight - threadBox.scrollTop - threadBox.clientHeight) < 70;
+        threadBox.classList.remove('chat-thread--empty');
+        threadBox.innerHTML = '';
+
+        if (!payload.thread.length) {
+          threadBox.appendChild(el('p', 'page-subtitle', 'Нет сообщений.'));
+          prevLastIncomingMessageId = null;
+        } else {
+          let prevRenderedTime = null;
+          payload.thread.forEach((msg) => {
+            const row = el('div', 'chat-msg');
+            row.classList.add(msg.is_mine ? 'chat-msg--mine' : 'chat-msg--other');
+
+            const meta = el('div', 'chat-msg__meta');
+            const currentTime = msg.created_at || '';
+            if (currentTime !== prevRenderedTime) {
+              meta.appendChild(el('span', 'muted', currentTime));
+              prevRenderedTime = currentTime;
+            }
+            row.appendChild(meta);
+
+            const bubble = el('div', notificationBubbleClass(msg.notification_state));
+            if (msg.message_type === 'system') bubble.appendChild(el('span', 'badge', 'Система'));
+            if (msg.text) {
+              bubble.appendChild(el('div', 'chat-msg__text', msg.text || ''));
+            }
+            if (msg.attachment_url) {
+              if (msg.attachment_is_image) {
+                const imageLink = el('a', 'chat-attachment chat-attachment--image');
+                imageLink.href = msg.attachment_url;
+                imageLink.target = '_blank';
+                imageLink.rel = 'noopener';
+                const previewImage = el('img', '');
+                previewImage.src = msg.attachment_url;
+                previewImage.alt = msg.attachment_name || 'image';
+                imageLink.appendChild(previewImage);
+                bubble.appendChild(imageLink);
+              } else {
+                const fileLink = el('a', 'chat-attachment', '📎 ' + (msg.attachment_name || 'Файл'));
+                fileLink.href = msg.attachment_url;
+                fileLink.target = '_blank';
+                fileLink.rel = 'noopener';
+                bubble.appendChild(fileLink);
+              }
+            }
+            appendNotificationControls(bubble, msg, isSystemDialog && !msg.is_mine);
+            row.appendChild(bubble);
+            threadBox.appendChild(row);
+          });
+
+          const lastMsg = payload.thread[payload.thread.length - 1];
+          if (lastMsg && !lastMsg.is_mine) {
+            const lastIncomingId = Number(lastMsg.id) || 0;
+            if (prevLastIncomingMessageId !== null && lastIncomingId > prevLastIncomingMessageId) {
+              if (window.AppUI && typeof window.AppUI.toast === 'function') {
+                window.AppUI.toast('Новое сообщение в текущем диалоге', 'info', 2800);
+              }
+              if (window.AppUI && typeof window.AppUI.playMessageTone === 'function') {
+                window.AppUI.playMessageTone();
+              }
+            }
+            prevLastIncomingMessageId = lastIncomingId;
+          }
+        }
+
+        if (chatForm) chatForm.style.display = isSystemDialog ? 'none' : '';
+        if (systemReplyHint) systemReplyHint.style.display = isSystemDialog ? '' : 'none';
+
+        if (shouldAutoScroll || payload.thread.length !== Number(root.dataset.threadCount || 0)) {
+          threadBox.scrollTop = threadBox.scrollHeight;
+        }
+        root.dataset.threadCount = String(payload.thread.length || 0);
+      }
+
+      async function refreshState() {
+        if (!stateUrl) return;
+        const url = selectedUserId ? (stateUrl + '?user_id=' + selectedUserId) : stateUrl;
+        try {
+          const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+          if (!response.ok) return;
+          const payload = await response.json();
+          renderDialogs(payload.dialogs || []);
+          renderUsers(payload.users || []);
+          updateReadAllButton(payload.unread_total);
+          renderThread(payload);
+        } catch (e) {}
+      }
+
+      if (markAllReadBtn && readAllUrl) {
+        markAllReadBtn.addEventListener('click', async () => {
+          try {
+            const response = await fetch(readAllUrl, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'X-CSRFToken': getCookie('csrftoken') },
+            });
+            if (!response.ok) return;
+            await refreshState();
+            if (window.AppUI && typeof window.AppUI.toast === 'function') {
+              window.AppUI.toast('Все сообщения отмечены прочитанными', 'success', 2200);
+            }
+          } catch (e) {}
+        });
+      }
+
+      initComposerControls();
+      refreshState();
+      window.setInterval(refreshState, 4000);
+    })();
+  </script>
+{% endblock %}

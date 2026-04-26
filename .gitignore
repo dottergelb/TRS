@@ -7,3 +7,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 staticfiles/
+.env
+media/
+created_teacher_accounts_*.csv
+teacher_credentials_store.csv
+runserver.out.log
+runserver.err.log

@@ -1,12 +1,13 @@
 ﻿{% load static %}
 <!doctype html>
+{% load user_icons %}
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}ИС замещений{% endblock %}</title>
 
-  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=2026-04-26-3">
   <link rel="icon" type="image/png" href="{% static 'img/icona.png' %}">
   <link rel="icon" type="image/png" sizes="64x64" href="{% static 'img/favicon-64.png' %}">
   <link rel="icon" type="image/png" sizes="128x128" href="{% static 'img/favicon-128.png' %}">
@@ -38,11 +39,26 @@
           </div>
 
           <div class="nav-actions">
+            {% if not user.is_guest %}
+              <a id="navMsgLink" class="nav-icon-link" href="{% url 'communications:chats' %}" title="Сообщения" aria-label="Сообщения">
+                💬
+                <span id="navUnreadMessagesCount" class="alert-badge" hidden>0</span>
+              </a>
+            {% endif %}
+            {% if user.is_superuser or user.is_admin %}
+              <a id="navNotifLink" class="nav-icon-link" href="{% url 'communications:notifications' %}" title="Уведомления" aria-label="Уведомления">
+                🔔
+                <span id="navUnreadNotificationsCount" class="alert-badge" hidden>0</span>
+              </a>
+            {% endif %}
             <div class="nav-user" title="Текущий пользователь">
-              <span class="nav-user__icon">👋</span>
+              <span class="nav-user__icon" data-fixed="1">{{ user|user_icon }}</span>
               <span class="nav-user__name">{{ user.full_name|default:user.username }}</span>
             </div>
-            <a class="btn btn--ghost btn--sm" href="/logout/">Выйти</a>
+            <form method="post" action="{% url 'accounts:logout' %}" style="display:inline;">
+              {% csrf_token %}
+              <button class="btn btn--ghost btn--sm" type="submit">Выйти</button>
+            </form>
           </div>
         </div>
       </header>
@@ -54,13 +70,14 @@
           <button type="button" id="sidebarClose" class="icon-btn" aria-label="Закрыть меню">✕</button>
         </div>
         <nav class="app-sidebar__nav">
-          {% if user.is_superuser or user.can_calendar %}
+          <a class="app-sidebar__link" href="{% url 'communications:cabinet' %}">Кабинет</a>
+          {% if user.is_superuser or user.can_calendar or user.is_guest or user.is_teacher %}
             <a class="app-sidebar__link" href="/replacements/calendar/">Календарь</a>
           {% endif %}
-          {% if user.is_superuser or user.can_calendar or user.can_logs %}
+          {% if user.is_superuser or user.can_calendar or user.can_logs or user.is_guest or user.is_teacher %}
             <a class="app-sidebar__link" href="/replacements/stats/">Статистика</a>
           {% endif %}
-          {% if user.is_superuser or user.can_calendar or user.can_calls %}
+          {% if user.is_superuser or user.can_calendar or user.can_calls or user.is_guest %}
             <a class="app-sidebar__link" href="/replacements/cabinets/">Кабинеты</a>
           {% endif %}
           {% if user.is_superuser or user.can_teachers %}
@@ -79,6 +96,19 @@
           {% if user.is_superuser or user.can_users %}
             <a class="app-sidebar__link" href="{% url 'accounts:user_list' %}">Пользователи</a>
           {% endif %}
+          {% if not user.is_guest %}
+            <a id="sidebarMsgLink" class="app-sidebar__link" href="{% url 'communications:chats' %}">
+              Сообщения
+              <span id="sidebarUnreadMessagesCount" class="alert-badge alert-badge--inline" hidden>0</span>
+            </a>
+          {% endif %}
+          {% if user.is_superuser or user.is_admin %}
+            <a id="sidebarNotifLink" class="app-sidebar__link" href="{% url 'communications:notifications' %}">
+              Уведомления
+              <span id="sidebarUnreadNotificationsCount" class="alert-badge alert-badge--inline" hidden>0</span>
+            </a>
+          {% endif %}
+          <a class="app-sidebar__link" href="{% url 'communications:tickets' %}">Тикеты</a>
         </nav>
       </aside>
     {% endif %}
@@ -89,7 +119,7 @@
   </main>
 
   <footer class="app-footer">
-    <div class="app-footer__inner">© 2025 Все права защищены</div>
+    <div class="app-footer__inner">© {% now "Y" %} Все права защищены</div>
   </footer>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-relevant="additions"></div>
@@ -101,39 +131,7 @@
     </div>
   {% endif %}
 
-  <script src="{% static 'js/ui.js' %}"></script>
-  <script>
-    (function () {
-      const topNav = document.querySelector('.top-nav');
-      const applyTopOffset = () => {
-        if (!topNav) return;
-        const h = topNav.offsetHeight || 60;
-        document.documentElement.style.setProperty('--top-nav-height', h + 'px');
-      };
-      applyTopOffset();
-      window.addEventListener('resize', applyTopOffset);
-
-      const body = document.body;
-      const toggle = document.getElementById('sidebarToggle');
-      const closeBtn = document.getElementById('sidebarClose');
-      const backdrop = document.getElementById('sidebarBackdrop');
-      const links = document.querySelectorAll('.app-sidebar__link');
-      if (!toggle || !backdrop) return;
-
-      const setOpen = (open) => {
-        body.classList.toggle('sidebar-open', !!open);
-        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-      };
-
-      toggle.addEventListener('click', () => setOpen(!body.classList.contains('sidebar-open')));
-      if (closeBtn) closeBtn.addEventListener('click', () => setOpen(false));
-      backdrop.addEventListener('click', () => setOpen(false));
-      links.forEach((l) => l.addEventListener('click', () => setOpen(false)));
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') setOpen(false);
-      });
-    })();
-  </script>
+  <script src="{% static 'js/ui.js' %}?v=2026-04-26-2"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

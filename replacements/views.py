@@ -1,7 +1,6 @@
 ﻿from django.forms import BooleanField
 from collections import defaultdict
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from docx.shared import Pt, RGBColor
 
@@ -28,6 +27,7 @@ import calendar as _pycalendar
 from types import SimpleNamespace
 
 from .audit import log_activity
+from accounts.icon_service import get_icon_for_display_name
 
 from .scheduling import (
     day_short_from_date,
@@ -54,6 +54,53 @@ def _name_matches_term_ci(full_name: str | None, term: str | None) -> bool:
 
 def _use_gsheets_backend() -> bool:
     return False
+
+
+def _is_guest_user(user) -> bool:
+    return bool(getattr(user, "is_guest", False))
+
+
+def _is_teacher_user(user) -> bool:
+    return bool(getattr(user, "is_teacher", False))
+
+
+def _resolve_teacher_for_user(user) -> Teacher | None:
+    full_name = str(getattr(user, "full_name", "") or "").strip()
+    if not full_name:
+        return None
+    return Teacher.objects.filter(full_name__iexact=full_name).first()
+
+
+def _deny_guest_write_json(request):
+    if _is_guest_user(request.user):
+        return JsonResponse({"error": "Гостевой доступ: только просмотр"}, status=403)
+    return None
+
+
+def _can_calendar_read(user) -> bool:
+    return bool(
+        user.is_superuser
+        or _is_guest_user(user)
+        or _is_teacher_user(user)
+        or getattr(user, "can_calendar", False)
+        or getattr(user, "can_calls", False)
+    )
+
+
+def _can_calendar_write(user) -> bool:
+    return bool(user.is_superuser or getattr(user, "can_calendar", False))
+
+
+def _api_error(message: str, *, status: int = 400, code: str = "bad_request", **extra):
+    payload = {
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    }
+    if extra:
+        payload.update(extra)
+    return JsonResponse(payload, status=status)
 
 
 def as_bool(v) -> bool:
@@ -225,6 +272,7 @@ def _gs_save_lessons_from_parsed(parsed_data: list[dict]) -> tuple[int, int]:
     return deactivated, saved_count
 
 
+@login_required
 @require_GET
 def available_rooms(request):
     """
@@ -232,6 +280,9 @@ def available_rooms(request):
     В список попадают все уникальные кабинеты из расписания и сохранённых замен.
     Для каждого кабинета вычисляется статус: свободен или занят (есть пересечение по времени).
     """
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, "can_calendar", False) or getattr(request.user, "can_calls", False)):
+        return HttpResponse("Forbidden", status=403)
+
     try:
         lesson_id = request.GET.get('lesson_id')
         date_str = request.GET.get('date')
@@ -404,17 +455,25 @@ def available_rooms(request):
 
         return JsonResponse({'rooms': result})
 
-    except Exception as e:
-                                                  
-        return JsonResponse({'rooms': [], 'error': str(e)}, status=200)
+    except Exception:
+        return _api_error(
+            "Не удалось проверить занятость кабинетов",
+            status=500,
+            code="internal_error",
+            rooms=[],
+        )
 
 
+@login_required
 @require_GET
 def room_conflicts_api(request):
     """
     Возвращает список конфликтов занятости выбранного кабинета по времени.
     Используется на фронте для показа предупреждений и требования подтверждения при выборе кабинета.
     """
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, "can_calendar", False) or getattr(request.user, "can_calls", False)):
+        return HttpResponse("Forbidden", status=403)
+
     classroom = (request.GET.get('classroom') or '').strip()
     date_str = request.GET.get('date')
     day = request.GET.get('day')
@@ -625,8 +684,18 @@ def _cabinet_replacements():
 @login_required
 def calendar_view(request):
                                                                            
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or _is_teacher_user(request.user) or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
+    if _is_teacher_user(request.user):
+        teacher = _resolve_teacher_for_user(request.user)
+        return render(
+            request,
+            "teacher_calendar.html",
+            {
+                "teacher_name": teacher.full_name if teacher else (request.user.full_name or request.user.username),
+                "teacher_found": bool(teacher),
+            },
+        )
     day = request.GET.get('day', 'пн')
     return render(request, 'calendar.html', {'day': day})
 
@@ -778,8 +847,11 @@ def _get_or_create_teacher_by_name(raw_name: str, teacher_by_key: dict[str, list
 
 
 @login_required
-@csrf_exempt
 def import_replacements_docx(request):
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if request.method != "POST":
         return JsonResponse({"error": "Метод не поддерживается"}, status=405)
 
@@ -792,10 +864,18 @@ def import_replacements_docx(request):
 
     if not uploaded_file:
         return JsonResponse({"error": "Файл не передан"}, status=400)
+    if uploaded_file.size > int(getattr(settings, "MAX_DOCX_UPLOAD_SIZE", 10 * 1024 * 1024)):
+        return JsonResponse({"error": "Файл слишком большой"}, status=400)
     if not date_str:
         return JsonResponse({"error": "Параметр date обязателен"}, status=400)
     if not uploaded_file.name.lower().endswith(".docx"):
         return JsonResponse({"error": "Поддерживаются только .docx файлы"}, status=400)
+    content_type = str(getattr(uploaded_file, "content_type", "") or "").lower()
+    if content_type and content_type not in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/octet-stream",
+    }:
+        return JsonResponse({"error": "Некорректный тип файла"}, status=400)
 
     try:
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -962,8 +1042,12 @@ def activity_logs_view(request):
     })
 
 
-@csrf_exempt
+@login_required
 def save_replacements(request):
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
@@ -1765,7 +1849,11 @@ def save_replacements(request):
     return JsonResponse({"error": "Метод не разрешен"}, status=405)
 
 
+@login_required
+@require_GET
 def get_suggestions(request):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     try:
         lesson_id = request.GET.get("lesson_id")
         day = request.GET.get("day")
@@ -2390,17 +2478,21 @@ def cabinet_replacement_view(request):
     Страница для управления замещениями кабинетов. Доступна только суперпользователям
     или пользователям с правами на календарь или звонки (can_calendar, can_calls).
     """
-    if not (request.user.is_superuser or getattr(request.user, "can_calendar", False) or getattr(request.user, "can_calls", False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, "can_calendar", False) or getattr(request.user, "can_calls", False)):
         return HttpResponse("Forbidden", status=403)
     return render(request, "cabinet_replacements.html", {})
 
 
+@login_required
 @require_GET
 def cabinet_lessons(request):
     """
     API: Возвращает список уроков на выбранную дату в выбранном кабинете.
     В ответе передаются id, start, end, class, subject, teacher, number.
     """
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, "can_calendar", False) or getattr(request.user, "can_calls", False)):
+        return HttpResponse("Forbidden", status=403)
+
     date_str = request.GET.get("date")
     cabinet = (request.GET.get("cabinet") or "").strip()
     if not date_str or not cabinet:
@@ -2412,6 +2504,7 @@ def cabinet_lessons(request):
     if _use_gsheets_backend():
         day_short = day_short_from_date(selected_date)
         teacher_map = _gs_teacher_map()
+        lesson_map = _gs_lesson_map()
         subject_map = _gs_subject_map()
         result = []
         for l in _gs_active_lessons_rows():
@@ -2448,13 +2541,17 @@ def cabinet_lessons(request):
     return JsonResponse({"lessons": result})
 
 
-@csrf_exempt
+@login_required
 def save_cabinet_replacements(request):
     """
     API: Сохраняет замены кабинетов. Предполагается, что учитель остаётся тем же,
     а меняется только кабинет. Получает список replacements, каждый с полями
     lesson_id, date, classroom (новый кабинет), confirmed (опционально).
     """
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if request.method != "POST":
         return JsonResponse({"error": "Метод не разрешён"}, status=405)
     try:
@@ -2566,8 +2663,8 @@ def save_cabinet_replacements(request):
 
             store.replace_table_dicts("replacements_replacement", repl_rows)
             return JsonResponse({"status": "success"})
-        except Exception as e:
-            return JsonResponse({"error": f"Внутренняя ошибка: {str(e)}"}, status=500)
+        except Exception:
+            return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
     try:
         with transaction.atomic():
             for item in items:
@@ -2634,16 +2731,19 @@ def save_cabinet_replacements(request):
                     }
                 )
             return JsonResponse({"status": "success"})
-    except Exception as e:
-        return JsonResponse({"error": f"Внутренняя ошибка: {str(e)}"}, status=500)
+    except Exception:
+        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
 
 
+@login_required
 @require_GET
 def export_cabinet_docx(request):
     """
     API: экспорт в DOCX отчёта о замене кабинета.
     Требуются параметры date (YYYY-MM-DD) и cabinet (номер/имя кабинета).
     """
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     date_str = request.GET.get("date")
     cabinet = (request.GET.get("cabinet") or "").strip()
     if not date_str or not cabinet:
@@ -2797,7 +2897,11 @@ def export_cabinet_docx(request):
 logger = logging.getLogger(__name__)
 
 
+@login_required
+@require_GET
 def teacher_lessons_view(request, teacher_id, day):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     try:
         if _use_gsheets_backend():
             teacher_map = _gs_teacher_map()
@@ -2840,14 +2944,18 @@ def teacher_lessons_view(request, teacher_id, day):
                 'day': day
             }
         )
-    except Exception as e:
-        return render(request, 'error.html', {'error': str(e)})
+    except Exception:
+        return render(request, "error.html", {"error": "Не удалось открыть расписание учителя"})
 
 
 
+@login_required
+@require_GET
 def teacher_conflicts_api(request):
     """Возвращает конфликты занятости учителя по времени (уроки + уже сохранённые замещения).
     Используется на фронте для показа предупреждения и требования подтверждения."""
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     try:
         teacher_id = int(request.GET.get('teacher_id'))
         date_str = request.GET.get('date')
@@ -3131,11 +3239,17 @@ def teacher_conflicts_api(request):
 
         return JsonResponse({'conflicts': conflicts, 'busy': any(c.get('type') in ('lesson','replacement') for c in conflicts)})
 
-    except Exception as e:
-        return JsonResponse({'conflicts': [], 'error': str(e)}, status=200)
+    except Exception:
+        return _api_error(
+            "Не удалось проверить конфликты учителя",
+            status=500,
+            code="internal_error",
+            conflicts=[],
+        )
 
 
-@csrf_exempt
+@login_required
+@require_GET
 def teacher_search(request):
     """Поиск учителей для ручного выбора замещения (Select2).
 
@@ -3145,6 +3259,8 @@ def teacher_search(request):
     Также помечает занятых как disabled (чтобы нельзя было выбрать),
     кроме кейса «вторая группа» (параллельный урок того же класса+номера).
     """
+    if not _can_calendar_read(request.user):
+        return JsonResponse({"results": []}, status=403)
 
     term = (request.GET.get('term') or '').strip()
     teacher_id_param = request.GET.get('teacher_id')
@@ -3619,7 +3735,7 @@ def teacher_search_all(request):
 @require_GET
 def vacancy_teachers_for_date(request):
     """Return vacancy teachers that have lessons on selected date."""
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
 
     date_str = request.GET.get("date")
@@ -3674,7 +3790,182 @@ def vacancy_teachers_for_date(request):
     return JsonResponse({"teachers": teachers})
 
 
+@login_required
+@require_GET
+def my_replacements_for_day_api(request):
+    if not _is_teacher_user(request.user):
+        return HttpResponse("Forbidden", status=403)
+
+    teacher = _resolve_teacher_for_user(request.user)
+    if not teacher:
+        return JsonResponse({"error": "Учитель для текущего пользователя не найден"}, status=400)
+
+    date_str = (request.GET.get("date") or "").strip()
+    if not date_str:
+        return JsonResponse({"error": "Параметр date обязателен"}, status=400)
+
+    try:
+        selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:
+        return JsonResponse({"error": "Некорректная дата. Ожидается YYYY-MM-DD"}, status=400)
+
+    if _use_gsheets_backend():
+        teacher_map = _gs_teacher_map()
+        lesson_map = _gs_lesson_map()
+        items = []
+        for repl in _gs_store().get_table_dicts("replacements_replacement"):
+            if str(repl.get("date") or "") != selected_date.strftime("%Y-%m-%d"):
+                continue
+            if not _gs_is_teacher_replacement(repl):
+                continue
+            if as_int(repl.get("replacement_teacher_id")) != teacher.id:
+                continue
+            lesson = lesson_map.get(as_int(repl.get("lesson_id")) or -1) or {}
+            items.append(
+                {
+                    "lesson_number": as_int(lesson.get("lesson_number")),
+                    "class_group": str(lesson.get("class_group") or ""),
+                    "subject_name": "",
+                    "start_time": str(lesson.get("start_time") or ""),
+                    "end_time": str(lesson.get("end_time") or ""),
+                    "classroom": str(repl.get("replacement_classroom") or lesson.get("classroom") or ""),
+                    "original_teacher": teacher_map.get(as_int(repl.get("original_teacher_id")) or -1, ""),
+                    "replacement_teacher": teacher.full_name,
+                    "is_special": False,
+                }
+            )
+        items.sort(key=lambda x: (x.get("lesson_number") is None, x.get("lesson_number") or 999, x.get("class_group") or ""))
+        return JsonResponse(
+            {
+                "teacher": teacher.full_name,
+                "date": selected_date.strftime("%Y-%m-%d"),
+                "items": items,
+            }
+        )
+
+    items = []
+    repl_qs = (
+        _teacher_replacements()
+        .filter(date=selected_date, replacement_teacher=teacher)
+        .select_related("lesson__subject", "original_teacher", "replacement_teacher")
+        .order_by("lesson__lesson_number", "lesson__class_group")
+    )
+    for repl in repl_qs:
+        lesson = repl.lesson
+        items.append(
+            {
+                "lesson_number": lesson.lesson_number if lesson else None,
+                "class_group": lesson.class_group if lesson else "",
+                "subject_name": (lesson.subject.name if lesson and lesson.subject else ""),
+                "start_time": lesson.start_time.strftime("%H:%M") if lesson and lesson.start_time else "",
+                "end_time": lesson.end_time.strftime("%H:%M") if lesson and lesson.end_time else "",
+                "classroom": (repl.replacement_classroom or (lesson.classroom if lesson else "") or ""),
+                "original_teacher": repl.original_teacher.full_name if repl.original_teacher else "",
+                "replacement_teacher": repl.replacement_teacher.full_name if repl.replacement_teacher else "",
+                "is_special": False,
+            }
+        )
+
+    special_qs = (
+        SpecialReplacement.objects.filter(date=selected_date, replacement_teacher=teacher)
+        .select_related("original_teacher")
+        .order_by("lesson_number", "class_group")
+    )
+    for sr in special_qs:
+        items.append(
+            {
+                "lesson_number": sr.lesson_number,
+                "class_group": sr.class_group or "",
+                "subject_name": sr.subject_name or "",
+                "start_time": sr.start_time.strftime("%H:%M") if sr.start_time else "",
+                "end_time": sr.end_time.strftime("%H:%M") if sr.end_time else "",
+                "classroom": sr.classroom or "",
+                "original_teacher": sr.original_teacher.full_name if sr.original_teacher else "",
+                "replacement_teacher": teacher.full_name,
+                "is_special": True,
+            }
+        )
+
+    items.sort(key=lambda x: (x.get("lesson_number") is None, x.get("lesson_number") or 999, x.get("class_group") or ""))
+    return JsonResponse(
+        {
+            "teacher": teacher.full_name,
+            "date": selected_date.strftime("%Y-%m-%d"),
+            "items": items,
+        }
+    )
+
+
+@login_required
+@require_GET
+def my_replacement_dates_for_month_api(request):
+    if not _is_teacher_user(request.user):
+        return HttpResponse("Forbidden", status=403)
+
+    teacher = _resolve_teacher_for_user(request.user)
+    if not teacher:
+        return JsonResponse({"dates": []})
+
+    year_raw = request.GET.get("year")
+    month_raw = request.GET.get("month")
+    try:
+        year = int(year_raw)
+        month = int(month_raw)
+        if not (1 <= month <= 12):
+            raise ValueError
+    except Exception:
+        return JsonResponse({"dates": []})
+
+    if _use_gsheets_backend():
+        dates = set()
+        for r in _gs_store().get_table_dicts("replacements_replacement"):
+            if not _gs_is_teacher_replacement(r):
+                continue
+            if as_int(r.get("replacement_teacher_id")) != teacher.id:
+                continue
+            ds = str(r.get("date") or "")
+            try:
+                d = datetime.strptime(ds, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if d.year == year and d.month == month:
+                dates.add(ds)
+        for s in _gs_store().get_table_dicts("replacements_special_replacement"):
+            if as_int(s.get("replacement_teacher_id")) != teacher.id:
+                continue
+            ds = str(s.get("date") or "")
+            try:
+                d = datetime.strptime(ds, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if d.year == year and d.month == month:
+                dates.add(ds)
+        return JsonResponse({"dates": sorted(dates)})
+
+    start = datetime(year, month, 1).date()
+    if month == 12:
+        end = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+    else:
+        end = datetime(year, month + 1, 1).date() - timedelta(days=1)
+
+    qs_regular = _teacher_replacements().filter(
+        replacement_teacher=teacher,
+        date__range=(start, end),
+    ).values_list("date", flat=True).distinct()
+    qs_special = SpecialReplacement.objects.filter(
+        replacement_teacher=teacher,
+        date__range=(start, end),
+    ).values_list("date", flat=True).distinct()
+
+    dates = sorted({d.strftime("%Y-%m-%d") for d in list(qs_regular) + list(qs_special)})
+    return JsonResponse({"dates": dates})
+
+
+@login_required
 def get_saved_replacements(request):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
+        return HttpResponse("Forbidden", status=403)
+
     date = request.GET.get('date')
     if not date:
         return JsonResponse({"error": "Параметр date обязателен"}, status=400)
@@ -3893,8 +4184,11 @@ def specializations_view(request):
 
 
 @login_required
-@csrf_exempt
 def update_specialization(request):
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
                                                                                
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
@@ -3954,8 +4248,8 @@ def update_specialization(request):
             })
 
             return JsonResponse({'status': 'success'})
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=400)
+        except Exception:
+            return _api_error("Некорректные данные запроса", status=400, code="bad_request")
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
 
@@ -3964,6 +4258,10 @@ def update_specialization(request):
 def add_teacher_api(request):
     """Create a new teacher from the specialization editor page."""
                                                                            
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
     try:
@@ -3998,8 +4296,8 @@ def add_teacher_api(request):
             teacher = Teacher.objects.create(full_name=full_name)
     except IntegrityError:
         return JsonResponse({'error': 'Такой учитель уже существует'}, status=409)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
 
     log_activity(request, "teacher_add", {"teacher_id": teacher.id, "full_name": teacher.full_name})
     return JsonResponse({'status': 'success', 'teacher': {'id': teacher.id, 'full_name': teacher.full_name}})
@@ -4013,6 +4311,10 @@ def delete_teacher_api(request, teacher_id: int):
     Safety: do not allow deleting teachers that already have lessons or replacements.
     """
                                                                          
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
@@ -4059,8 +4361,8 @@ def delete_teacher_api(request, teacher_id: int):
     try:
         with transaction.atomic():
             teacher.delete()
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
 
     log_activity(request, "teacher_delete", {"teacher_id": teacher_id, "full_name": teacher.full_name})
     return JsonResponse({'status': 'success'})
@@ -4132,7 +4434,11 @@ def get_lesson_by_id(request, lesson_id):
         return JsonResponse({"error": f"Урок с ID {lesson_id} не найден"}, status=404)
 
 
+@login_required
+@require_GET
 def teacher_details(request, teacher_id):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     if _use_gsheets_backend():
         for t in _gs_store().get_table_dicts("replacements_teacher"):
             if as_int(t.get("teacher_id")) == int(teacher_id):
@@ -4145,7 +4451,11 @@ def teacher_details(request, teacher_id):
         return JsonResponse({"error": "Teacher not found"}, status=404)
 
 
+@login_required
+@require_GET
 def get_lessons(request, teacher_id, day):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     if _use_gsheets_backend():
         subject_map = _gs_subject_map()
         lessons = [
@@ -4210,8 +4520,11 @@ def get_teacher(request, teacher_id):
         return JsonResponse({"error": "Teacher not found"}, status=404)
 
 
+@login_required
 @require_GET
 def get_lessons_by_id(request, lesson_id):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     if _use_gsheets_backend():
         lesson = None
         for l in _gs_active_lessons_rows():
@@ -4269,11 +4582,15 @@ def get_lessons_by_id(request, lesson_id):
         })
     except Lesson.DoesNotExist:
         return JsonResponse({"error": f"Урок с ID {lesson_id} не найден"}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": f"Ошибка сервера: {str(e)}"}, status=500)
+    except Exception:
+        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
 
 
+@login_required
 def check_replacements_for_date(request):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
+        return HttpResponse("Forbidden", status=403)
+
     date = request.GET.get('date')
     if not date:
         return JsonResponse({'error': 'Дата не указана'}, status=400)
@@ -4293,8 +4610,12 @@ def check_replacements_for_date(request):
     return JsonResponse({'exists': exists})
 
 
-@csrf_exempt
+@login_required
 def delete_replacements_for_date(request):
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if request.method != 'POST':
         return JsonResponse({'error': 'Метод не разрешен'}, status=405)
 
@@ -4328,10 +4649,11 @@ def delete_replacements_for_date(request):
         deleted_special, _ = SpecialReplacement.objects.filter(date=date).delete()
         return JsonResponse({'status': 'success', 'deleted_count': deleted + deleted_special})
 
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
 
 
+@login_required
 def replacement_dates_for_month(request):
     """Return a list of YYYY-MM-DD dates that have saved replacements.
 
@@ -4340,6 +4662,9 @@ def replacement_dates_for_month(request):
       - year: int
       - month: int (1-12)
     """
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
+        return HttpResponse("Forbidden", status=403)
+
     try:
         year = int(request.GET.get('year'))
         month = int(request.GET.get('month'))
@@ -4376,15 +4701,19 @@ def replacement_dates_for_month(request):
         qs_special = SpecialReplacement.objects.filter(date__range=(start, end)).values_list('date', flat=True).distinct()
         dates = sorted({d.strftime('%Y-%m-%d') for d in list(qs_repl) + list(qs_special)})
         return JsonResponse({'dates': dates})
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
 
 
 from datetime import datetime, timedelta
 from .models import Lesson, Replacement, Teacher
 
 
+@login_required
+@require_GET
 def teacher_hours(request, teacher_id):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     try:
                                     
         selected_date = request.GET.get('date')
@@ -4442,8 +4771,8 @@ def teacher_hours(request, teacher_id):
 
     except Teacher.DoesNotExist:
         return JsonResponse({'error': 'Teacher not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
 
 
 @login_required
@@ -4621,10 +4950,13 @@ def backend_health_api(request):
             "issues": issues,
             "warnings": warnings,
         })
-    except Exception as e:
+    except Exception:
         return JsonResponse({
             "ok": False,
-            "error": str(e),
+            "error": {
+                "code": "internal_error",
+                "message": "Не удалось выполнить проверку backend",
+            },
             "backend": "gsheets" if _use_gsheets_backend() else "sqlite",
             "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, status=500)
@@ -4669,15 +5001,25 @@ def _stats_date_range(mode: str, date_str: str | None, date_from: str | None, da
 
 @login_required
 def statistics_view(request):
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False) or getattr(request.user, 'can_logs', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or _is_teacher_user(request.user) or getattr(request.user, 'can_calendar', False) or getattr(request.user, 'can_logs', False)):
         return HttpResponse("Forbidden", status=403)
+    if _is_teacher_user(request.user):
+        teacher = _resolve_teacher_for_user(request.user)
+        return render(
+            request,
+            "teacher_statistics.html",
+            {
+                "teacher_name": teacher.full_name if teacher else (request.user.full_name or request.user.username),
+                "teacher_found": bool(teacher),
+            },
+        )
     return render(request, "statistics.html", {})
 
 
 @login_required
 @require_GET
 def replacement_statistics_api(request):
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False) or getattr(request.user, 'can_logs', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or _is_teacher_user(request.user) or getattr(request.user, 'can_calendar', False) or getattr(request.user, 'can_logs', False)):
         return HttpResponse("Forbidden", status=403)
 
     mode = request.GET.get("mode", "day")
@@ -4688,13 +5030,18 @@ def replacement_statistics_api(request):
 
     try:
         mode_norm, start, end, range_label = _stats_date_range(mode, date_str, date_from, date_to, month_str)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
+
+    scoped_teacher = _resolve_teacher_for_user(request.user) if _is_teacher_user(request.user) else None
+    if _is_teacher_user(request.user) and not scoped_teacher:
+        return JsonResponse({"error": "Учитель для текущего пользователя не найден"}, status=400)
 
     if _use_gsheets_backend():
+        scope_suffix = f":teacher:{scoped_teacher.id}" if scoped_teacher else ":all"
         cache_key = (
             f"replacements:stats:gsheets:{mode_norm}:"
-            f"{start.strftime('%Y-%m-%d')}:{end.strftime('%Y-%m-%d')}"
+            f"{start.strftime('%Y-%m-%d')}:{end.strftime('%Y-%m-%d')}{scope_suffix}"
         )
         cached_payload = cache.get(cache_key)
         if cached_payload is not None:
@@ -4714,6 +5061,8 @@ def replacement_statistics_api(request):
             except Exception:
                 continue
             if start <= d <= end:
+                if scoped_teacher and as_int(r.get("replacement_teacher_id")) != scoped_teacher.id:
+                    continue
                 replacements_rows.append(r)
 
         special_rows = []
@@ -4724,6 +5073,8 @@ def replacement_statistics_api(request):
             except Exception:
                 continue
             if start <= d <= end:
+                if scoped_teacher and as_int(s.get("replacement_teacher_id")) != scoped_teacher.id:
+                    continue
                 special_rows.append(s)
 
         absent_teacher_ids = {tid for tid in (as_int(r.get("original_teacher_id")) for r in replacements_rows) if tid is not None}
@@ -4775,6 +5126,7 @@ def replacement_statistics_api(request):
         max_all_replacing = max([(c["regular"] + c["special"]) for _, c in all_replacing], default=0)
 
         daily_stats: dict[str, dict] = {}
+        daily_details: dict[str, list[dict]] = {}
         for r in replacements_rows:
             key = str(r.get("date") or "")
             item = daily_stats.setdefault(
@@ -4791,6 +5143,16 @@ def replacement_statistics_api(request):
                 item["absent_ids"].add(ot)
             if rt is not None:
                 item["replacing_ids"].add(rt)
+            if scoped_teacher:
+                lesson = lesson_map.get(as_int(r.get("lesson_id")) or -1) or {}
+                daily_details.setdefault(key, []).append(
+                    {
+                        "lesson_number": as_int(lesson.get("lesson_number")),
+                        "class_group": str(lesson.get("class_group") or ""),
+                        "original_teacher": teacher_map.get(ot, "") if ot is not None else "",
+                        "is_special": bool(as_bool(r.get("production_necessity"))),
+                    }
+                )
 
                                                  
         for s in special_rows:
@@ -4803,6 +5165,16 @@ def replacement_statistics_api(request):
             rt = as_int(s.get("replacement_teacher_id"))
             if rt is not None:
                 item["replacing_ids"].add(rt)
+            if scoped_teacher:
+                ot = as_int(s.get("original_teacher_id"))
+                daily_details.setdefault(key, []).append(
+                    {
+                        "lesson_number": as_int(s.get("lesson_number")),
+                        "class_group": str(s.get("class_group") or ""),
+                        "original_teacher": teacher_map.get(ot, "") if ot is not None else "",
+                        "is_special": False,
+                    }
+                )
 
         daily_rows = []
         cur = start
@@ -4841,6 +5213,7 @@ def replacement_statistics_api(request):
             "top_replacing_teachers": [
                 {
                     "teacher": name,
+                    "icon": get_icon_for_display_name(name),
                     "count": int(cnt["regular"] + cnt["special"]),
                     "regular_count": int(cnt["regular"]),
                     "special_count": int(cnt["special"]),
@@ -4853,6 +5226,7 @@ def replacement_statistics_api(request):
             "top_absent_teachers": [
                 {
                     "teacher": name,
+                    "icon": get_icon_for_display_name(name),
                     "count": int(cnt),
                     "share": int(round((cnt / max_absent) * 100)) if max_absent else 0,
                 }
@@ -4861,6 +5235,7 @@ def replacement_statistics_api(request):
             "all_replacing_teachers": [
                 {
                     "teacher": name,
+                    "icon": get_icon_for_display_name(name),
                     "count": int(cnt["regular"] + cnt["special"]),
                     "regular_count": int(cnt["regular"]),
                     "special_count": int(cnt["special"]),
@@ -4872,6 +5247,9 @@ def replacement_statistics_api(request):
             ],
             "daily": daily_rows,
         }
+        if scoped_teacher:
+            payload["teacher_scope"] = scoped_teacher.full_name
+            payload["daily_details"] = daily_details
         cache.set(cache_key, payload, 600)
         return JsonResponse(payload)
 
@@ -4879,13 +5257,16 @@ def replacement_statistics_api(request):
         _teacher_replacements()
         .filter(date__range=(start, end))
         .exclude(ignore_in_reports=True)
-        .select_related("replacement_teacher", "original_teacher")
+        .select_related("replacement_teacher", "original_teacher", "lesson")
     )
     special_qs = (
         SpecialReplacement.objects
         .filter(date__range=(start, end))
         .select_related("replacement_teacher")
     )
+    if scoped_teacher:
+        replacements_qs = replacements_qs.filter(replacement_teacher=scoped_teacher)
+        special_qs = special_qs.filter(replacement_teacher=scoped_teacher)
 
     absent_teacher_ids = set(
         replacements_qs.exclude(original_teacher_id__isnull=True).values_list("original_teacher_id", flat=True)
@@ -4931,6 +5312,7 @@ def replacement_statistics_api(request):
     max_all_replacing = max([(c["regular"] + c["special"]) for _, c in all_replacing], default=0)
 
     daily_stats: dict[str, dict] = {}
+    daily_details: dict[str, list[dict]] = {}
 
     for r in replacements_qs:
         key = r.date.strftime("%Y-%m-%d")
@@ -4950,6 +5332,13 @@ def replacement_statistics_api(request):
             item["absent_ids"].add(int(r.original_teacher_id))
         if r.replacement_teacher_id:
             item["replacing_ids"].add(int(r.replacement_teacher_id))
+        if scoped_teacher:
+            daily_details.setdefault(key, []).append({
+                "lesson_number": (r.lesson.lesson_number if r.lesson else None),
+                "class_group": (r.lesson.class_group if r.lesson else ""),
+                "original_teacher": (r.original_teacher.full_name if r.original_teacher else ""),
+                "is_special": bool(getattr(r, "production_necessity", False)),
+            })
 
                                              
     for s in special_qs:
@@ -4965,6 +5354,13 @@ def replacement_statistics_api(request):
         item["regular"] += 1
         if s.replacement_teacher_id:
             item["replacing_ids"].add(int(s.replacement_teacher_id))
+        if scoped_teacher:
+            daily_details.setdefault(key, []).append({
+                "lesson_number": s.lesson_number,
+                "class_group": s.class_group or "",
+                "original_teacher": (s.original_teacher.full_name if s.original_teacher else ""),
+                "is_special": False,
+            })
 
     daily_rows = []
     cur = start
@@ -5002,6 +5398,7 @@ def replacement_statistics_api(request):
         "top_replacing_teachers": [
             {
                 "teacher": name,
+                "icon": get_icon_for_display_name(name),
                 "count": int(cnt["regular"] + cnt["special"]),
                 "regular_count": int(cnt["regular"]),
                 "special_count": int(cnt["special"]),
@@ -5012,6 +5409,7 @@ def replacement_statistics_api(request):
         "top_absent_teachers": [
             {
                 "teacher": name,
+                "icon": get_icon_for_display_name(name),
                 "count": int(cnt),
                 "share": int(round((cnt / max_absent) * 100)) if max_absent else 0,
             }
@@ -5020,6 +5418,7 @@ def replacement_statistics_api(request):
         "all_replacing_teachers": [
             {
                 "teacher": name,
+                "icon": get_icon_for_display_name(name),
                 "count": int(cnt["regular"] + cnt["special"]),
                 "regular_count": int(cnt["regular"]),
                 "special_count": int(cnt["special"]),
@@ -5029,6 +5428,9 @@ def replacement_statistics_api(request):
         ],
         "daily": daily_rows,
     }
+    if scoped_teacher:
+        payload["teacher_scope"] = scoped_teacher.full_name
+        payload["daily_details"] = daily_details
     return JsonResponse(payload)
 
 
@@ -5327,8 +5729,8 @@ def replacement_summary_report(request):
         )
         return response
 
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
 
 
 @login_required
@@ -5337,8 +5739,8 @@ def replacement_daily_summary_docx(request):
     from urllib.parse import quote
     try:
         mode_norm, start, end, range_label = _report_range_from_request(request)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
 
     if _use_gsheets_backend():
         teacher_map = _gs_teacher_map()
@@ -5553,8 +5955,8 @@ def replacement_teacher_summary_docx(request):
     from urllib.parse import quote
     try:
         mode_norm, start, end, range_label = _report_range_from_request(request)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+    except Exception:
+        return _api_error("Некорректные данные запроса", status=400, code="bad_request")
 
     if _use_gsheets_backend():
         teacher_map = _gs_teacher_map()
@@ -5806,7 +6208,13 @@ def replacement_teacher_summary_docx(request):
     return response
 
 
+@login_required
 def class_schedule_view(request):
+    if request.method == "POST":
+        guest_forbidden = _deny_guest_write_json(request)
+        if guest_forbidden:
+            return guest_forbidden
+
                                                                                  
     if not (request.user.is_superuser or getattr(request.user, 'can_calls', False)):
         return HttpResponse("Forbidden", status=403)
@@ -5877,8 +6285,8 @@ def class_schedule_view(request):
             })
             return JsonResponse({"status": "success"})
 
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+        except Exception:
+            return _api_error("Не удалось сохранить расписание звонков", status=500, code="internal_error")
 
     else:
         if _use_gsheets_backend():
@@ -5992,6 +6400,13 @@ def upload(request):
                 request,
                 'Файл не получен. Проверьте, что выбран HTML и форма отправляется с enctype="multipart/form-data".'
             )
+            return render(request, 'upload.html', {'active_count': active_count})
+        if uploaded_file.size > int(getattr(settings, "MAX_SCHEDULE_UPLOAD_SIZE", 10 * 1024 * 1024)):
+            messages.error(request, "Файл слишком большой.")
+            return render(request, 'upload.html', {'active_count': active_count})
+        filename = str(getattr(uploaded_file, "name", "") or "").lower()
+        if not (filename.endswith(".html") or filename.endswith(".htm")):
+            messages.error(request, "Поддерживаются только HTML/HTM файлы.")
             return render(request, 'upload.html', {'active_count': active_count})
 
         raw = uploaded_file.read()
@@ -6160,7 +6575,7 @@ def upload_schedule_api(request):
 @require_GET
 def special_replacement_options(request):
     """Return distinct class groups and subjects from active lessons."""
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
 
     if _use_gsheets_backend():
@@ -6184,7 +6599,7 @@ def special_replacement_options(request):
 @require_GET
 def special_replacement_lessons(request):
     """Return lessons for selected class+subject on a specific date."""
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
 
     date_str = request.GET.get("date")
@@ -6243,7 +6658,7 @@ def special_replacement_lessons(request):
 @require_GET
 def special_replacement_time(request):
     """Return shift and bell times for manual special replacement by class and lesson number."""
-    if not (request.user.is_superuser or getattr(request.user, 'can_calendar', False)):
+    if not (request.user.is_superuser or _is_guest_user(request.user) or getattr(request.user, 'can_calendar', False)):
         return HttpResponse("Forbidden", status=403)
 
     class_group = (request.GET.get("class_group") or "").strip()
@@ -6310,6 +6725,10 @@ def special_replacement_time(request):
 @require_POST
 def update_lesson_teacher(request, lesson_id):
     """Update teacher either for one lesson or for all subjects of the same class."""
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
     try:
@@ -6418,6 +6837,10 @@ def update_lesson_teacher(request, lesson_id):
 @require_POST
 def reassign_teacher_lessons(request):
     """Move all lessons from one teacher to another."""
+    guest_forbidden = _deny_guest_write_json(request)
+    if guest_forbidden:
+        return guest_forbidden
+
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
 
@@ -6515,6 +6938,12 @@ def reassign_teacher_lessons(request):
 @require_POST
 def clear_schedule(request):
     """Deactivate the currently active schedule without touching bells or replacement history."""
+    if _is_guest_user(request.user):
+        return HttpResponse("Forbidden", status=403)
+
+    if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
+        return HttpResponse("Forbidden", status=403)
+
     if _use_gsheets_backend():
         rows = _gs_store().get_table_dicts("replacements_lesson")
         deactivated = 0
@@ -6530,4 +6959,3 @@ def clear_schedule(request):
     messages.success(request, f'Расписание очищено (деактивировано уроков: {deactivated}).')
     log_activity(request, "schedule_clear", {"deactivated_active_lessons": deactivated})
     return redirect('/upload/')
-

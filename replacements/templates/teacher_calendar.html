@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Календарь учителя{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <style>
+    .teacher-card { border-radius: 16px; }
+    .teacher-table td, .teacher-table th { white-space: nowrap; }
+    .teacher-empty { color: var(--muted); font-weight: 600; padding: 14px 0; }
+    .flatpickr-day.has-replacements:not(.selected) {
+      background: rgba(16, 185, 129, 0.16);
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+    .flatpickr-day.has-replacements:not(.selected)::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0f766e;
+      position: absolute;
+      bottom: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Календарь замещений учителя</h1>
+      <p class="page-subtitle">Учитель: <strong>{{ teacher_name }}</strong></p>
+      {% if not teacher_found %}
+        <p class="page-subtitle" style="color:#b91c1c;">Профиль учителя не найден в таблице преподавателей. Обратитесь к администратору.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card teacher-card">
+    <div class="card__body">
+      <div class="row" style="align-items:flex-end;">
+        <div class="field" style="min-width:220px;">
+          <label class="label" for="datePicker">Дата</label>
+          <input id="datePicker" type="text" placeholder="Выберите дату">
+        </div>
+        <button id="reloadBtn" class="btn btn--primary" type="button">Обновить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card teacher-card" style="margin-top:12px;">
+    <div class="card__body">
+      <div class="table-responsive">
+        <table class="table teacher-table">
+          <thead>
+            <tr>
+              <th>№ урока</th>
+              <th>Класс</th>
+              <th>Предмет</th>
+              <th>Время</th>
+              <th>Кабинет</th>
+              <th>Отсутствующий</th>
+              <th>Тип</th>
+            </tr>
+          </thead>
+          <tbody id="rowsBody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="teacher-empty" hidden>На выбранную дату замещений нет.</div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script>
+    (function () {
+      const datePicker = document.getElementById('datePicker');
+      const reloadBtn = document.getElementById('reloadBtn');
+      const rowsBody = document.getElementById('rowsBody');
+      const emptyState = document.getElementById('emptyState');
+      const today = new Date().toISOString().slice(0, 10);
+      let selectedDate = today;
+      let picker = null;
+      let markedDates = new Set();
+      let markedMonthKey = null;
+
+      async function loadMarkedDatesForMonth(year, month0) {
+        const month = month0 + 1;
+        const key = String(year) + '-' + String(month).padStart(2, '0');
+        if (markedMonthKey === key) return;
+        try {
+          const res = await fetch('/replacements/api/my-replacement-dates/?year=' + year + '&month=' + month, { credentials: 'same-origin' });
+          const data = await res.json();
+          markedDates = new Set(Array.isArray(data.dates) ? data.dates : []);
+          markedMonthKey = key;
+          if (picker) picker.redraw();
+        } catch (e) {}
+      }
+
+      picker = flatpickr(datePicker, {
+        dateFormat: 'Y-m-d',
+        defaultDate: today,
+        locale: { firstDayOfWeek: 1 },
+        onReady: function (_, __, fp) {
+          const d = fp.selectedDates[0] || new Date();
+          loadMarkedDatesForMonth(d.getFullYear(), d.getMonth());
+        },
+        onMonthChange: function (_, __, fp) {
+          const d = fp.currentMonth != null ? new Date(fp.currentYear, fp.currentMonth, 1) : (fp.selectedDates[0] || new Date());
+          loadMarkedDatesForMonth(d.getFullYear(), d.getMonth());
+        },
+        onYearChange: function (_, __, fp) {
+          const d = fp.currentMonth != null ? new Date(fp.currentYear, fp.currentMonth, 1) : (fp.selectedDates[0] || new Date());
+          loadMarkedDatesForMonth(d.getFullYear(), d.getMonth());
+        },
+        onDayCreate: function (_, __, ___, dayElem) {
+          const d = dayElem.dateObj;
+          const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+          if (markedDates.has(key)) {
+            dayElem.classList.add('has-replacements');
+          }
+        },
+        onChange: function (dates, str) {
+          selectedDate = str || today;
+          loadData();
+        }
+      });
+
+      function esc(v) {
+        return String(v == null ? '' : v)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function render(items) {
+        rowsBody.innerHTML = '';
+        if (!items.length) {
+          emptyState.hidden = false;
+          return;
+        }
+        emptyState.hidden = true;
+        rowsBody.innerHTML = items.map(function (x) {
+          const time = (x.start_time || x.end_time) ? ((x.start_time || '') + ' - ' + (x.end_time || '')) : '—';
+          const lessonNumber = (x.lesson_number !== null && x.lesson_number !== undefined && x.lesson_number !== '') ? x.lesson_number : '—';
+          return (
+            '<tr>' +
+              '<td>' + esc(lessonNumber) + '</td>' +
+              '<td>' + esc(x.class_group || '—') + '</td>' +
+              '<td>' + esc(x.subject_name || '—') + '</td>' +
+              '<td>' + esc(time) + '</td>' +
+              '<td>' + esc(x.classroom || '—') + '</td>' +
+              '<td>' + esc(x.original_teacher || '—') + '</td>' +
+              '<td>' + (x.is_special ? 'Отдельное' : 'По расписанию') + '</td>' +
+            '</tr>'
+          );
+        }).join('');
+      }
+
+      async function loadData() {
+        reloadBtn.disabled = true;
+        try {
+          const res = await fetch('/replacements/api/my-replacements/?date=' + encodeURIComponent(selectedDate), { credentials: 'same-origin' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
+          render(Array.isArray(data.items) ? data.items : []);
+          if (selectedDate && Array.isArray(data.items) && data.items.length > 0) {
+            markedDates.add(selectedDate);
+            if (picker) picker.redraw();
+          }
+        } catch (err) {
+          rowsBody.innerHTML = '';
+          emptyState.hidden = false;
+          emptyState.textContent = err.message || 'Ошибка загрузки данных';
+          if (window.AppUI && typeof window.AppUI.toast === 'function') {
+            window.AppUI.toast(err.message || 'Ошибка', 'danger');
+          }
+        } finally {
+          reloadBtn.disabled = false;
+        }
+      }
+
+      reloadBtn.addEventListener('click', loadData);
+      loadData();
+    })();
+  </script>
+{% endblock %}

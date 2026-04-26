@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load user_icons %}
+
+{% block title %}Личный кабинет{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Личный кабинет</h1>
+      <p class="page-subtitle">{{ user|user_icon }} {{ user.full_name|default:user.username }}</p>
+    </div>
+  </div>
+
+  <div class="grid grid--3">
+    <div class="card"><div class="card__body"><h3>Новые уведомления</h3><p class="hero-title" style="font-size:36px;">{{ notifications_unread }}</p></div></div>
+    <div class="card"><div class="card__body"><h3>Непрочитанные сообщения</h3><p class="hero-title" style="font-size:36px;">{{ chat_unread }}</p></div></div>
+    <div class="card"><div class="card__body"><h3>Открытые тикеты</h3><p class="hero-title" style="font-size:36px;">{{ open_tickets }}</p></div></div>
+  </div>
+
+  <div class="grid grid--2" style="margin-top:12px;">
+    <div class="card">
+      <div class="card__body">
+        <h3>Основные разделы</h3>
+        <div class="stack">
+          <a class="btn btn--primary" href="/replacements/calendar/">Календарь</a>
+          <a class="btn btn--secondary" href="/replacements/stats/">Статистика</a>
+          {% if user.is_superuser or user.is_admin %}
+            <a class="btn btn--secondary" href="{% url 'communications:notifications' %}">Системные уведомления</a>
+          {% endif %}
+          {% if not user.is_guest %}
+            <a class="btn btn--secondary" href="{% url 'communications:chats' %}">Сообщения</a>
+          {% endif %}
+          <a class="btn btn--secondary" href="{% url 'communications:tickets' %}">Тикеты</a>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__body">
+        <h3>Профиль</h3>
+        <p><b>Логин:</b> {{ user.username }}</p>
+        <p><b>ФИО:</b> {{ user|user_icon }} {{ user.full_name }}</p>
+        <p><b>Роль:</b>
+          {% if user.is_superuser %}Суперпользователь
+          {% elif user.is_admin %}Администратор
+          {% elif user.is_teacher %}Учитель
+          {% elif user.is_guest %}Гость
+          {% else %}Пользователь{% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+{% endblock %}

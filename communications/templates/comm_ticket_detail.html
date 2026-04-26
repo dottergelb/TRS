@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Тикет{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">{{ ticket.subject }}</h1>
+      <p class="page-subtitle">
+        Автор: {{ ticket.author.full_name|default:ticket.author.username }} ·
+        Статус: {{ ticket.status }} ·
+        {% if ticket.is_important %}⭐ Важный{% endif %}
+      </p>
+    </div>
+    <div class="row">
+      {% if is_admin %}
+        <form method="post" action="{% url 'communications:ticket_important' ticket.id %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--secondary">{% if ticket.is_important %}Снять важность{% else %}Отметить важным{% endif %}</button>
+        </form>
+        {% if ticket.status == 'open' %}
+          <form method="post" action="{% url 'communications:ticket_close' ticket.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--ghost">Закрыть тикет</button>
+          </form>
+        {% else %}
+          <form method="post" action="{% url 'communications:ticket_reopen' ticket.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--secondary">Переоткрыть</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <div class="table-responsive" style="max-height:460px;">
+        <table class="table">
+          <tbody>
+            {% for m in messages_list %}
+              <tr>
+                <td style="width:220px;">
+                  <b>{% if m.author %}{{ m.author.full_name|default:m.author.username }}{% else %}Система{% endif %}</b><br>
+                  <span class="muted">{{ m.created_at|date:"d.m.Y H:i" }}</span>
+                </td>
+                <td style="white-space:pre-wrap;">{{ m.text }}</td>
+              </tr>
+            {% empty %}
+              <tr><td>Сообщений нет.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if can_write %}
+        <form method="post" style="margin-top:10px;">
+          {% csrf_token %}
+          {{ form.text }}
+          <button class="btn btn--primary" type="submit" style="margin-top:8px;">Отправить</button>
+        </form>
+      {% else %}
+        <p class="page-subtitle">Тикет закрыт, отправка сообщений недоступна.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
+

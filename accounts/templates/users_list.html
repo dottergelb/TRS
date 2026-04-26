@@ -6,10 +6,20 @@
   <div class="page-header">
     <div>
       <h1 class="hero-title">Управление пользователями</h1>
-      <p class="hero-subtitle">Создание, редактирование и удаление учётных записей.</p>
+      <p class="hero-subtitle">Создание, редактирование и удаление учетных записей.</p>
     </div>
     <div class="row" style="margin-top:8px;">
       <a class="btn btn--primary" href="{% url 'accounts:register' %}">Регистрация нового пользователя</a>
+      <form method="post" action="{% url 'accounts:export_teacher_credentials' %}" style="display:inline;">
+        {% csrf_token %}
+        <button
+          type="submit"
+          class="btn btn--secondary"
+          onclick="return confirm('Экспорт создаст CSV только с логинами учителей (без паролей). Продолжить?');"
+        >
+          Экспорт логинов Учителей
+        </button>
+      </form>
     </div>
   </div>
 
@@ -17,20 +27,36 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Логин</th>
           <th>ФИО</th>
-          <th>Доступы</th>
+          <th>Роль</th>
+          <th>Доступ</th>
           <th>Действия</th>
         </tr>
       </thead>
       <tbody>
         {% for u in users %}
         <tr>
-          <td>{{ u.username }}</td>
           <td>{{ u.full_name|default:"—" }}</td>
           <td>
             {% if u.is_superuser %}
-              Все
+              Суперпользователь
+            {% elif u.is_admin %}
+              Администратор
+            {% elif u.is_teacher %}
+              Учитель
+            {% elif u.is_guest %}
+              Гость
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if u.is_superuser or u.is_admin %}
+              Полный доступ
+            {% elif u.is_teacher %}
+              Календарь (свои замещения), Статистика (свои данные)
+            {% elif u.is_guest %}
+              Только просмотр
             {% else %}
               {% if u.can_calendar %}Календарь {% endif %}
               {% if u.can_teachers %}Учителя {% endif %}
@@ -47,7 +73,10 @@
           <td>
             <a class="btn btn--secondary btn--sm" href="{% url 'accounts:user_edit' u.id %}">Изменить</a>
             {% if not u.is_superuser %}
-              <a class="btn btn--ghost btn--sm" href="{% url 'accounts:user_delete' u.id %}" onclick="return confirm('Удалить пользователя?');">Удалить</a>
+              <form method="post" action="{% url 'accounts:user_delete' u.id %}" style="display:inline;">
+                {% csrf_token %}
+                <button class="btn btn--ghost btn--sm" type="submit" onclick="return confirm('Удалить пользователя?');">Удалить</button>
+              </form>
             {% endif %}
           </td>
         </tr>

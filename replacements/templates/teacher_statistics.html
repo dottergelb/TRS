@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Статистика учителя{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/style.css">
+  <style>
+    .teacher-kpis { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; }
+    .teacher-kpi { border:1px solid var(--border); border-radius:14px; background:#fff; padding:14px; text-align:center; }
+    .teacher-kpi__label { margin:0 0 8px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:#607089; }
+    .teacher-kpi__value { margin:0; font-size:30px; line-height:1; font-family:"Space Grotesk","Manrope",sans-serif; letter-spacing:-.03em; }
+    .teacher-stats-table th, .teacher-stats-table td { text-align:center; vertical-align:top; }
+    .teacher-details { margin:0; padding:0; list-style:none; display:grid; gap:2px; text-align:left; }
+    .teacher-details li { font-size:12px; color:#475569; }
+    @media (max-width: 900px) { .teacher-kpis { grid-template-columns:1fr; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Статистика учителя</h1>
+      <p class="page-subtitle">Учитель: <strong>{{ teacher_name }}</strong></p>
+      {% if not teacher_found %}
+        <p class="page-subtitle" style="color:#b91c1c;">Профиль учителя не найден в таблице преподавателей. Обратитесь к администратору.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <div class="row" style="align-items:flex-end;">
+        <div class="field" style="min-width:220px;">
+          <label class="label" for="monthPicker">Месяц</label>
+          <input id="monthPicker" type="text" placeholder="Выберите месяц">
+        </div>
+        <button id="loadBtn" class="btn btn--primary" type="button">Обновить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="teacher-kpis" style="margin-top:12px;">
+    <div class="teacher-kpi">
+      <p class="teacher-kpi__label">Всего замещений</p>
+      <p class="teacher-kpi__value" id="kpiTotal">0</p>
+    </div>
+    <div class="teacher-kpi">
+      <p class="teacher-kpi__label">Дней с замещениями</p>
+      <p class="teacher-kpi__value" id="kpiDays">0</p>
+    </div>
+    <div class="teacher-kpi">
+      <p class="teacher-kpi__label">Максимум за день</p>
+      <p class="teacher-kpi__value" id="kpiPeak">0</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <div class="card__body">
+      <div class="table-responsive">
+        <table class="table teacher-stats-table">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Основные</th>
+              <th>Что замещал</th>
+            </tr>
+          </thead>
+          <tbody id="dailyBody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="page-subtitle" style="margin-top:8px;" hidden>За выбранный месяц данных нет.</div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/index.js"></script>
+  <script>
+    (function () {
+      const monthPicker = document.getElementById('monthPicker');
+      const loadBtn = document.getElementById('loadBtn');
+      const kpiTotal = document.getElementById('kpiTotal');
+      const kpiDays = document.getElementById('kpiDays');
+      const kpiPeak = document.getElementById('kpiPeak');
+      const dailyBody = document.getElementById('dailyBody');
+      const emptyState = document.getElementById('emptyState');
+
+      const now = new Date();
+      const initialMonth = now.toISOString().slice(0, 7);
+      let selectedMonth = initialMonth;
+
+      flatpickr(monthPicker, {
+        dateFormat: 'Y-m',
+        defaultDate: initialMonth + '-01',
+        plugins: [new monthSelectPlugin({ shorthand: true, dateFormat: 'Y-m', altFormat: 'F Y' })],
+        onChange: function (dates, str) {
+          selectedMonth = str || initialMonth;
+          loadStats();
+        }
+      });
+
+      function esc(v) {
+        return String(v == null ? '' : v)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function render(data) {
+        const totals = data.totals || {};
+        const daily = Array.isArray(data.daily) ? data.daily : [];
+        const detailsMap = (data && typeof data.daily_details === 'object' && data.daily_details) ? data.daily_details : {};
+        const used = daily.filter(function (x) { return (x.regular_replacements || 0) > 0; });
+        const peak = used.reduce(function (acc, x) { return Math.max(acc, x.regular_replacements || 0); }, 0);
+
+        kpiTotal.textContent = String(totals.regular_replacements || 0);
+        kpiDays.textContent = String(used.length);
+        kpiPeak.textContent = String(peak);
+
+        dailyBody.innerHTML = '';
+        if (!used.length) {
+          emptyState.hidden = false;
+          return;
+        }
+        emptyState.hidden = true;
+        dailyBody.innerHTML = used.map(function (x) {
+          const details = (Array.isArray(detailsMap[x.date]) ? detailsMap[x.date] : []).filter(function (d) {
+            return !d.is_special;
+          });
+          const detailsHtml = details.length
+              ? ('<ul class="teacher-details">' + details.map(function (d) {
+                const hasLessonNumber = d.lesson_number !== null && d.lesson_number !== undefined && d.lesson_number !== '';
+                const lesson = hasLessonNumber ? ('Урок ' + esc(d.lesson_number)) : 'Отдельный урок';
+                const cls = d.class_group ? (', ' + esc(d.class_group)) : '';
+                const orig = d.original_teacher ? (' — за ' + esc(d.original_teacher)) : '';
+                return '<li>' + lesson + cls + orig + '</li>';
+              }).join('') + '</ul>')
+            : '—';
+          return (
+            '<tr>' +
+              '<td>' + esc(x.date || '') + '</td>' +
+              '<td>' + esc(x.regular_replacements || 0) + '</td>' +
+              '<td>' + detailsHtml + '</td>' +
+            '</tr>'
+          );
+        }).join('');
+      }
+
+      async function loadStats() {
+        loadBtn.disabled = true;
+        try {
+          const params = new URLSearchParams();
+          params.set('mode', 'month');
+          params.set('month', selectedMonth);
+          const res = await fetch('/replacements/api/stats/?' + params.toString(), { credentials: 'same-origin' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Ошибка загрузки статистики');
+          render(data);
+        } catch (err) {
+          if (window.AppUI && typeof window.AppUI.toast === 'function') {
+            window.AppUI.toast(err.message || 'Ошибка', 'danger');
+          }
+        } finally {
+          loadBtn.disabled = false;
+        }
+      }
+
+      loadBtn.addEventListener('click', loadStats);
+      loadStats();
+    })();
+  </script>
+{% endblock %}
