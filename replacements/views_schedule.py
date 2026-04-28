@@ -5,20 +5,22 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
 
 from .models import Lesson
-from .views import (
+from .services.permissions_parsing import (
     _active_lessons,
-    _api_error,
     _can_calendar_read,
     _effective_shift_for_class,
     _effective_times_for_lesson,
-    class_schedule_view,
-    clear_schedule,
-    import_replacements_docx,
-    teacher_lessons_view,
-    upload,
-    upload_schedule_api,
-    upload_schedule_view,
 )
+from . import views as legacy_views
+
+
+class_schedule_view = legacy_views.class_schedule_view
+clear_schedule = legacy_views.clear_schedule
+import_replacements_docx = legacy_views.import_replacements_docx
+teacher_lessons_view = legacy_views.teacher_lessons_view
+upload = legacy_views.upload
+upload_schedule_api = legacy_views.upload_schedule_api
+upload_schedule_view = legacy_views.upload_schedule_view
 
 
 @login_required
@@ -56,35 +58,33 @@ def get_lessons(request, teacher_id, day):
 def get_lessons_by_id(request, lesson_id):
     if not _can_calendar_read(request.user):
         return HttpResponse("Forbidden", status=403)
-
     try:
         lesson = Lesson.objects.select_related("subject", "teacher").get(id=lesson_id)
-        eff_shift = _effective_shift_for_class(lesson.class_group, lesson.shift)
-        eff_start, eff_end = _effective_times_for_lesson(
-            lesson.class_group,
-            lesson.lesson_number,
-            eff_shift,
-            lesson.start_time,
-            lesson.end_time,
-        )
-        return JsonResponse(
-            {
-                "id": lesson.id,
-                "subject": lesson.subject.name if lesson.subject else "Не указано",
-                "teacher": lesson.teacher.full_name if lesson.teacher else "Не указан",
-                "number": lesson.lesson_number,
-                "class": lesson.class_group,
-                "room": lesson.classroom,
-                "start": eff_start.strftime("%H:%M") if eff_start else "--:--",
-                "end": eff_end.strftime("%H:%M") if eff_end else "--:--",
-                "shift": eff_shift,
-                "day_of_week": lesson.day_of_week,
-            }
-        )
     except Lesson.DoesNotExist:
         return JsonResponse({"error": f"Урок с ID {lesson_id} не найден"}, status=404)
-    except Exception:
-        return _api_error("Внутренняя ошибка сервера", status=500, code="internal_error")
+
+    eff_shift = _effective_shift_for_class(lesson.class_group, lesson.shift)
+    eff_start, eff_end = _effective_times_for_lesson(
+        lesson.class_group,
+        lesson.lesson_number,
+        eff_shift,
+        lesson.start_time,
+        lesson.end_time,
+    )
+    return JsonResponse(
+        {
+            "id": lesson.id,
+            "subject": lesson.subject.name if lesson.subject else "Не указано",
+            "teacher": lesson.teacher.full_name if lesson.teacher else "Не указан",
+            "number": lesson.lesson_number,
+            "class": lesson.class_group,
+            "room": lesson.classroom,
+            "start": eff_start.strftime("%H:%M") if eff_start else "--:--",
+            "end": eff_end.strftime("%H:%M") if eff_end else "--:--",
+            "shift": eff_shift,
+            "day_of_week": lesson.day_of_week,
+        }
+    )
 
 
 __all__ = [

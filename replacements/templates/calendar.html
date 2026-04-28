@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block title %}Календарь · ИС замещений{% endblock %}
 {% block container_class %}container--wide{% endblock %}
@@ -89,25 +89,34 @@
         .conflict-line { font-size: 12px; line-height: 1.35; color: #7f1d1d; }
         .conflict-confirm { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.35; color: #7f1d1d; margin-top: 4px; }
         .conflict-confirm input { margin-top: 2px; }
+        .repl-field-date { min-width: 220px; }
+        .repl-field-teachers { min-width: 320px; }
+        @media (max-width: 900px) {
+            .repl-field-date,
+            .repl-field-teachers {
+                min-width: 0;
+                width: 100%;
+            }
+        }
     </style>{% endblock %}
 
 {% block content %}
-    <div class="page-header">
+    <div class="page-header reveal">
         <div>
             <h1 class="page-title">Календарь замещений</h1>
             <p class="page-subtitle">Выберите дату, настройте замены и сохраните. Дни с сохранёнными заменами подсвечены.</p>
         </div>
     </div>
 
-    <div class="card repl-toolbar">
+    <div class="card repl-toolbar reveal">
       <div class="card__body repl-toolbar__body">
         <div class="repl-toolbar__left">
-          <div class="field" style="min-width: 220px;">
+          <div class="field repl-field-date">
             <label class="label" for="datePicker">Дата</label>
             <input type="text" id="datePicker" aria-label="Выберите дату" placeholder="Выберите дату">
           </div>
 
-          <div class="field" style="min-width: 320px;">
+          <div class="field repl-field-teachers">
             <label class="label">Учителя (для просмотра расписания)</label>
             <div id="teacherSelectContainer" class="repl-teacher-pickers"></div>
           </div>
@@ -132,7 +141,7 @@
       </div>
     </div>
 
-    <div id="specialReplacementsCard" class="card repl-special">
+    <div id="specialReplacementsCard" class="card repl-special reveal">
       <div class="card__body">
         <div class="repl-special__title">Отдельные замещения</div>
         <div id="specialReplacementsList" class="repl-special__list"></div>
@@ -241,7 +250,7 @@
             }
             try {
                 const previewRes = await fetch(`/comm/api/notifications/preview/?date=${encodeURIComponent(state.selectedDate)}`, {credentials: 'same-origin'});
-                const preview = await previewRes.json();
+                const preview = await readJsonOrThrow(previewRes, 'предпросмотра уведомлений');
                 if (!previewRes.ok) throw new Error(preview.error || 'Не удалось собрать предпросмотр');
 
                 const total = Number(preview.teachers_count || 0);
@@ -260,15 +269,29 @@
                 const sendRes = await fetch('/comm/api/notifications/send/', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken'),
+                        'Accept': 'application/json'
+                    },
                     body: JSON.stringify({date: state.selectedDate})
                 });
-                const sent = await sendRes.json();
+                const sent = await readJsonOrThrow(sendRes, 'отправки уведомлений');
                 if (!sendRes.ok) throw new Error(sent.error || 'Ошибка отправки');
                 AppUI.toast(`Отправлено: ${sent.created_notifications}, пропущено без пользователя: ${sent.skipped_without_user}.`, 'success');
             } catch (e) {
                 AppUI.toast(e.message || 'Ошибка отправки уведомлений', 'danger');
             }
+        }
+
+        async function readJsonOrThrow(response, actionName) {
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+                return await response.json();
+            }
+            const raw = await response.text();
+            const preview = (raw || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+            throw new Error(`Сервер вернул не-JSON ответ во время ${actionName} (HTTP ${response.status}): ${preview || 'пустой ответ'}`);
         }
 
         async function importReplacementsDocx(file) {
@@ -284,14 +307,32 @@
             payload.append('replace_all', '1');
 
             try {
-                const res = await fetch('/replacements/api/import-docx/', {
+                const startRes = await fetch('/replacements/api/import-docx/', {
                     method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
                     body: payload
                 });
-                const data = await res.json();
-                if (!res.ok) {
+                const res = startRes;
+                const contentType = (startRes.headers.get('content-type') || '').toLowerCase();
+                let startData = null;
+                if (contentType.includes('application/json')) {
+                    startData = await startRes.json();
+                } else {
+                    const raw = await startRes.text();
+                    throw new Error(`Сервер вернул не-JSON ответ (HTTP ${res.status}).`);
+                }
+                let data = startData;
+                if (!startRes.ok) {
                     throw new Error(data?.error || 'Ошибка импорта');
                 }
+
+                const jobId = startData?.job_id;
+                if (!jobId) throw new Error('Сервер не вернул идентификатор задачи импорта');
+                AppUI.toast('Импорт поставлен в очередь. Ожидайте завершения...', 'info');
+                data = await pollDocxImportStatus(jobId);
 
                 await fetchSavedReplacements();
                 await ensureVacancyTeachersForSelectedDate();
@@ -310,6 +351,25 @@
             } catch (err) {
                 console.error('Ошибка импорта DOCX:', err);
                 AppUI.toast(`Импорт не выполнен: ${err.message || err}`, 'danger');
+            }
+        }
+
+        async function pollDocxImportStatus(jobId) {
+            const timeoutMs = 10 * 60 * 1000;
+            const startedAt = Date.now();
+            while (true) {
+                const res = await fetch(`/replacements/api/import-docx/status/${encodeURIComponent(jobId)}/`, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: {'Accept': 'application/json'}
+                });
+                const contentType = (res.headers.get('content-type') || '').toLowerCase();
+                const data = contentType.includes('application/json') ? await res.json() : null;
+                if (!res.ok) throw new Error(data?.error || `Ошибка проверки статуса (HTTP ${res.status})`);
+                if (data?.status === 'success') return data;
+                if (data?.status === 'failed') throw new Error(data?.error || 'Импорт завершился с ошибкой');
+                if (Date.now() - startedAt > timeoutMs) throw new Error('Таймаут ожидания завершения импорта');
+                await new Promise(resolve => setTimeout(resolve, 1200));
             }
         }
 
@@ -570,7 +630,7 @@ function renderTeacherSelection() {
         const baseH = state.teacherHours[teacher.id]?.base || 0;
         const replH = state.teacherHours[teacher.id]?.replacements || 0;
         return `
-          <section class="card repl-teacher" data-teacher-id="${teacher.id}">
+          <section class="card repl-teacher reveal" data-teacher-id="${teacher.id}">
             <div class="card__header repl-teacher__header">
               <div class="repl-teacher__meta">
                 <div class="repl-teacher__name">${teacher.name}</div>
@@ -582,7 +642,7 @@ function renderTeacherSelection() {
               </div>
             </div>
             <div class="card__body">
-              <div class="lessons-container repl-lessons" style="display: none;"></div>
+              <div class="lessons-container repl-lessons is-collapsed"></div>
             </div>
           </section>
         `;
@@ -1099,7 +1159,7 @@ function renderLessons(teacherId) {
         const replacementName = repl ? getTeacherNameById(repl.replacementTeacherId) : null;
 
         return `
-          <div class="repl-lesson">
+          <div class="repl-lesson reveal">
             <div class="repl-lesson__top">
               <p class="repl-lesson__title">Урок ${lesson.number}</p>
               <span class="repl-lesson__time">${lesson.start}–${lesson.end}</span>
@@ -2338,9 +2398,9 @@ function toggleLessons(teacherId, forceOpen = null) {
     if (!root || !container) return;
 
     const btn = root.querySelector('button[data-action="toggle"]');
-    const hidden = (container.style.display === 'none' || getComputedStyle(container).display === 'none');
-    const open = (forceOpen === true) ? true : (forceOpen === false ? false : hidden);
-    container.style.display = open ? 'grid' : 'none';
+    const collapsed = container.classList.contains('is-collapsed');
+    const open = (forceOpen === true) ? true : (forceOpen === false ? false : collapsed);
+    container.classList.toggle('is-collapsed', !open);
     if (btn) btn.textContent = open ? '▴' : '▾';
 }
 

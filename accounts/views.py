@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from django_ratelimit.decorators import ratelimit
 
 from .forms import LoginForm, RegisterForm, UserUpdateForm
 from .models import CustomUser
@@ -103,6 +104,7 @@ def user_delete_view(request, user_id):
     return redirect("accounts:user_list")
 
 
+@ratelimit(key="ip", rate="20/m", block=True, method="POST")
 def login_view(request):
     if request.method == "POST":
         form = LoginForm(data=request.POST)

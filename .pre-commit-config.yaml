@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: no-runtime-artifacts
+        name: no runtime artifacts in repo
+        entry: python scripts/check_runtime_artifacts.py
+        language: system
+        pass_filenames: false

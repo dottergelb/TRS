@@ -31,6 +31,7 @@ body {
   margin: 0;
   font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
+  overflow-x: hidden;
   background:
     radial-gradient(880px 440px at -10% -10%, rgba(15, 91, 215, 0.2), transparent 62%),
     radial-gradient(880px 460px at 110% 8%, rgba(10, 125, 114, 0.2), transparent 58%),
@@ -519,6 +520,19 @@ input:focus, select:focus, textarea:focus {
 .repl-teacher__actions { display: inline-flex; gap: 8px; }
 
 .repl-lessons { display: grid; gap: 10px; }
+.lessons-container {
+  overflow: hidden;
+  max-height: 5200px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height 0.28s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+.lessons-container.is-collapsed {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
 
 .repl-lesson {
   border: 1px solid rgba(20, 35, 60, 0.1);
@@ -659,6 +673,29 @@ input:focus, select:focus, textarea:focus {
 @keyframes toastIn {
   from { transform: translateY(-6px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+.reveal {
+  animation: reveal 450ms ease both;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .lessons-container {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .modal-overlay {
@@ -919,6 +956,22 @@ input:focus, select:focus, textarea:focus {
   text-align: center;
 }
 
+body.page-enter main.container,
+body.page-enter .app-footer {
+  animation: pageReveal 170ms ease both;
+}
+
+@keyframes pageReveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .auth-shell {
   min-height: 100vh;
   display: grid;
@@ -962,14 +1015,19 @@ input:focus, select:focus, textarea:focus {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
+  .nav-user__name { display: none; }
+  .nav-user { padding: 8px 10px; }
 
   .page-header { flex-direction: column; align-items: flex-start; }
   .card__header, .card__hd { padding: 14px 16px; }
   .card__body, .card__bd { padding: 14px 16px; }
   .table th, .table td { padding: 8px 10px; }
+  .card__headtext { min-width: 0; }
 }
 
 @media (max-width: 640px) {
+  .container { width: min(100%, calc(100% - 16px)); padding: 14px 0 22px; }
+  .container--wide { width: min(100%, calc(100% - 16px)); }
   .row { align-items: stretch; }
   .btn { width: 100%; justify-content: center; }
   .btn--sm { width: auto; }
@@ -986,4 +1044,11 @@ input:focus, select:focus, textarea:focus {
 
   .toast-container { right: 10px; left: 10px; }
   .toast { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.page-enter main.container,
+  body.page-enter .app-footer {
+    animation: none !important;
+  }
 }

@@ -24,11 +24,53 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install ruff pip-audit
+
+      - name: Lint (ruff critical checks)
+        run: |
+          ruff check replacements/services replacements/views_replacements_api.py replacements/views_schedule.py replacements/views_calendar.py replacements/views_reports.py replacements/views_cabinets.py accounts communications teacher_replacement manage.py --select E9,F63,F7,F82
 
       - name: Django check
         run: |
           python manage.py check
 
+      - name: Migrations check
+        run: |
+          python manage.py makemigrations --check --dry-run
+
+      - name: Runtime artifacts policy
+        run: |
+          python scripts/check_runtime_artifacts.py --all
+
+      - name: Dependency security audit
+        run: |
+          python -m pip_audit -r requirements.txt
+
       - name: Run tests
         run: |
           python manage.py test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate docker compose files
+        run: |
+          docker compose -f docker-compose.yml config
+          DJANGO_SECRET_KEY=ci-secret DJANGO_ALLOWED_HOSTS=localhost POSTGRES_PASSWORD=ci docker compose -f docker-compose.prod.yml config
+
+      - name: Build production image
+        run: |
+          docker build -t dip-web-ci:latest .
+
+      - name: Validate prod env script
+        env:
+          DJANGO_SECRET_KEY: ci-very-secret
+          DJANGO_ALLOWED_HOSTS: localhost
+          POSTGRES_PASSWORD: ci-password
+        run: |
+          python scripts/validate_prod_env.py

@@ -525,7 +525,7 @@ def ticket_reopen_view(request, ticket_id: int):
 @require_GET
 def notifications_preview_api(request):
     if not is_admin_user(request.user):
-        return _forbidden()
+        return JsonResponse({"error": "Forbidden"}, status=403)
     date_raw = (request.GET.get("date") or "").strip()
     try:
         target_date = datetime.strptime(date_raw, "%Y-%m-%d").date()
@@ -546,7 +546,7 @@ def notifications_preview_api(request):
 @require_POST
 def notifications_send_api(request):
     if not is_admin_user(request.user):
-        return _forbidden()
+        return JsonResponse({"error": "Forbidden"}, status=403)
     try:
         import json
 

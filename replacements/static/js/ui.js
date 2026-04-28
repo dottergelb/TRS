@@ -125,6 +125,15 @@
     });
   }
 
+  function startPageEnterAnimation() {
+    if (!document.body) return;
+    document.body.classList.remove('page-leave');
+    document.body.classList.add('page-enter');
+    window.setTimeout(() => {
+      if (document.body) document.body.classList.remove('page-enter');
+    }, 260);
+  }
+
   window.AppUI = window.AppUI || {};
   window.AppUI.toast = toast;
   window.AppUI.playMessageTone = playIncomingMessageTone;
@@ -220,6 +229,7 @@
   function initUI() {
     if (initialized) return;
     initialized = true;
+    startPageEnterAnimation();
     applyTopOffset();
     applyRandomNavAnimal();
     markActiveSidebarLinks();

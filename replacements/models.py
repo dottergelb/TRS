@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+import uuid
 
 
 class Teacher(models.Model):
@@ -145,4 +146,37 @@ class ActivityLog(models.Model):
 
     class Meta:
         db_table = "replacements_activity_log"
+        ordering = ["-created_at"]
+
+
+class DocxImportTask(models.Model):
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCESS, "Success"),
+        (STATUS_FAILED, "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True, default="")
+    file_name = models.CharField(max_length=255, blank=True, default="")
+    date = models.DateField()
+    replace_all = models.BooleanField(default=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED, db_index=True)
+    parsed_rows = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    skipped_same_teacher = models.PositiveIntegerField(default=0)
+    unresolved_count = models.PositiveIntegerField(default=0)
+    unresolved_preview = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "replacements_docx_import_task"
         ordering = ["-created_at"]

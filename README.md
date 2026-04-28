@@ -1,51 +1,131 @@
-# DIP (Teacher Replacement System)
+# TRS (Teacher Replacement System)
 
-## Quick start
+Django-проект для управления заменами учителей: календарь замен, отдельные замены, кабинеты, статистика, уведомления сотрудникам, чаты/тикеты, импорт/экспорт DOCX.
 
-1. Create virtual environment and install deps:
+## Технологии
+
+- Python 3.12, Django
+- PostgreSQL
+- Redis + Celery (worker/beat)
+- Docker / Docker Compose
+- Nginx (prod)
+
+## Основные возможности
+
+- Календарь замен с сохранением на дату
+- Импорт DOCX в фоне через Celery со статусом задачи
+- Экспорт отчетов DOCX
+- Статистика по дню/периоду/месяцу
+- Оповещения сотрудникам
+- Управление учителями/специализациями
+- Журнал действий (audit log)
+
+## Локальный запуск (без Docker)
 
 ```powershell
 python -m venv .venv
-.\\.venv\\Scripts\\activate
+.\.venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
+python manage.py migrate
+python manage.py runserver 127.0.0.1:8000
 ```
 
-2. Create `.env` from `.env.example`.
+## Локальный запуск (Docker, dev)
 
-3. Run migrations and start app:
+```powershell
+copy .env.example .env
+docker compose up -d --build
+```
+
+Открыть:
+
+- http://127.0.0.1:8001
+
+Dev compose поднимает:
+
+- `web`
+- `db`
+- `redis`
+- `celery_worker`
+
+## Production stack
+
+Используется `docker-compose.prod.yml`:
+
+- `web` (gunicorn)
+- `nginx`
+- `db` (PostgreSQL)
+- `redis`
+- `celery_worker`
+- `celery_beat`
+
+Запуск:
+
+```powershell
+copy .env.prod.example .env.prod
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+URL по умолчанию:
+
+- http://127.0.0.1:8080
+
+## Переменные окружения (ключевые)
+
+- `DJANGO_ENV` (`dev` / `prod`)
+- `DJANGO_DB_ENGINE=postgres`
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`
+- `DJANGO_ALLOWED_HOSTS`
+- `DJANGO_CSRF_TRUSTED_ORIGINS`
+- `CELERY_BROKER_URL` (обычно `redis://redis:6379/0`)
+- `CELERY_RESULT_BACKEND` (обычно `redis://redis:6379/1`)
+- `MAX_DOCX_UPLOAD_SIZE`
+
+## Миграции
 
 ```powershell
 python manage.py migrate
-python manage.py runserver
 ```
 
-## Settings profiles
+Для Docker:
 
-- `DJANGO_ENV=dev` -> `teacher_replacement/settings_dev.py`
-- `DJANGO_ENV=prod` -> `teacher_replacement/settings_prod.py`
+```powershell
+docker compose exec web python manage.py migrate
+```
 
-Shared base settings are in `teacher_replacement/settings_base.py`.
+## Health-check endpoints
 
-## Security defaults
+- `/health/live/`
+- `/health/ready/`
 
-- No plaintext password export for teacher accounts.
-- Logout and user deletion are POST-only + CSRF.
-- Calendar/replacement API endpoints require auth and role-based access.
-- Upload limits are controlled by env vars:
-  - `MAX_CHAT_ATTACHMENT_SIZE`
-  - `CHAT_THREAD_LIMIT`
-  - `MAX_DOCX_UPLOAD_SIZE`
-  - `MAX_SCHEDULE_UPLOAD_SIZE`
-- Do not commit generated exports/logs with credentials or personal data.
+## Бэкапы PostgreSQL
 
-## Tests
+```powershell
+sh ./scripts/backup_postgres.sh
+sh ./scripts/restore_postgres.sh ./backups/<backup_file>.sql.gz
+```
+
+## Тесты
 
 ```powershell
 python manage.py test
 ```
 
-## Logging
+## Примечания по доступу извне
 
-- Request id is added by `replacements.middleware.RequestIdMiddleware`.
-- Response includes `X-Request-ID`.
-- Log formatter includes `rid=<request_id>`.
+Если открываете проект через туннель (например ngrok), добавьте домен туннеля в:
+
+- `DJANGO_ALLOWED_HOSTS`
+- `DJANGO_CSRF_TRUSTED_ORIGINS`
+
+И перезапустите `web`.
+
+## Структура (кратко)
+
+- `teacher_replacement/` — settings, urls, celery, health
+- `replacements/` — ядро логики замен, календарь, статистика, DOCX
+- `communications/` — уведомления, чаты, тикеты
+- `accounts/` — пользователи и доступы
+- `deploy/nginx/` — nginx-конфиг для prod
+- `scripts/` — утилиты деплоя/бэкапов/валидации

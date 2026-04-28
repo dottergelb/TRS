@@ -467,7 +467,6 @@
       </div>
 
       <div class="stats-toolbar__right">
-        <button type="button" id="loadStatsBtn" class="btn btn--primary">Обновить</button>
         <button type="button" id="downloadReportBtn" class="btn btn--ghost">Экспорт DOCX</button>
       </div>
     </div>
@@ -503,7 +502,7 @@
   </div>
 
   <div class="stats-main">
-    <div class="card">
+    <div class="card" id="dailyChartCard">
       <div class="card__header">
         <div class="stats-chart-head">
           <div>
@@ -597,7 +596,6 @@
     const modeDayBtn = document.getElementById('modeDay');
     const modePeriodBtn = document.getElementById('modePeriod');
     const modeMonthBtn = document.getElementById('modeMonth');
-    const loadBtn = document.getElementById('loadStatsBtn');
     const reportBtn = document.getElementById('downloadReportBtn');
 
     const dayField = document.getElementById('dayField');
@@ -624,6 +622,7 @@
     const topAbsent = document.getElementById('topAbsent');
     const allReplacing = document.getElementById('allReplacing');
     const dailyChart = document.getElementById('dailyChart');
+    const dailyChartCard = document.getElementById('dailyChartCard');
 
     const donut = document.getElementById('statsDonut');
     const donutTotal = document.getElementById('donutTotal');
@@ -634,6 +633,7 @@
 
     let mode = 'day';
     let previousTotal = null;
+    let autoReloadTimer = null;
 
     dayDate.value = todayStr;
     periodFrom.value = todayStr;
@@ -687,6 +687,9 @@
       periodFromField.classList.toggle('hidden', next !== 'period');
       periodToField.classList.toggle('hidden', next !== 'period');
       monthField.classList.toggle('hidden', next !== 'month');
+      if (dailyChartCard) {
+        dailyChartCard.classList.toggle('hidden', next === 'day');
+      }
     }
 
     function renderBars(container, rows, emptyText) {
@@ -897,8 +900,6 @@
     }
 
     async function loadStats() {
-      loadBtn.disabled = true;
-      loadBtn.textContent = 'Обновляем...';
       statsState.textContent = 'Статус: загрузка';
       try {
         const params = buildRangeParams();
@@ -941,16 +942,37 @@
         if (window.AppUI && typeof window.AppUI.toast === 'function') {
           window.AppUI.toast(err.message || 'Ошибка', 'danger');
         }
-      } finally {
-        loadBtn.disabled = false;
-        loadBtn.textContent = 'Обновить';
       }
+    }
+
+    function scheduleAutoReload(delayMs) {
+      if (autoReloadTimer) {
+        clearTimeout(autoReloadTimer);
+      }
+      autoReloadTimer = setTimeout(function () {
+        autoReloadTimer = null;
+        loadStats();
+      }, delayMs || 220);
+    }
+
+    function isActiveInput(input) {
+      if (mode === 'day') return input === dayDate;
+      if (mode === 'period') return input === periodFrom || input === periodTo;
+      return input === monthDate;
     }
 
     modeDayBtn.addEventListener('click', function () { setMode('day'); loadStats(); });
     modePeriodBtn.addEventListener('click', function () { setMode('period'); loadStats(); });
     modeMonthBtn.addEventListener('click', function () { setMode('month'); loadStats(); });
-    loadBtn.addEventListener('click', loadStats);
+    [dayDate, periodFrom, periodTo, monthDate].forEach(function (input) {
+      if (!input) return;
+      input.addEventListener('change', function () {
+        if (isActiveInput(input)) scheduleAutoReload(80);
+      });
+      input.addEventListener('keyup', function (event) {
+        if (event.key === 'Enter' && isActiveInput(input)) scheduleAutoReload(0);
+      });
+    });
     reportBtn.addEventListener('click', downloadReports);
 
     initDatePickers();
