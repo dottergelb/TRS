@@ -1,15 +1,23 @@
 {% extends "base.html" %}
 
 {% block title %}Тикеты{% endblock %}
+{% block section_title %}Тикеты{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
       <h1 class="page-title">{% if archive %}Архив тикетов{% else %}Открытые тикеты{% endif %}</h1>
       <p class="page-subtitle">
-        <a href="{% url 'communications:tickets' %}">Открытые</a> |
+        <a href="{% url 'communications:tickets' %}">Открытые</a> ·
         <a href="{% url 'communications:tickets' %}?archive=1">Архив</a>
       </p>
+      {% if is_admin %}
+      <p class="page-subtitle">
+        <a href="{% url 'communications:tickets' %}{% if archive %}?archive=1{% endif %}">Все</a> ·
+        <a href="{% url 'communications:tickets' %}?source=teacher{% if archive %}&archive=1{% endif %}">От учителя</a> ·
+        <a href="{% url 'communications:tickets' %}?source=support{% if archive %}&archive=1{% endif %}">В поддержку</a>
+      </p>
+      {% endif %}
     </div>
   </div>
 
@@ -21,27 +29,34 @@
             <th>Тема</th>
             <th>Автор</th>
             <th>Статус</th>
-            <th>Важный</th>
+            <th>Источник</th>
+            <th>Важность</th>
             <th>Создан</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {% for t in tickets %}
-            <tr {% if t.is_important %}style="background:#fff7ed;"{% endif %}>
+            <tr class="{% if t.is_important %}row-important{% endif %}">
               <td>{% if t.is_important %}⭐ {% endif %}{{ t.subject }}</td>
               <td>{{ t.author.full_name|default:t.author.username }}</td>
-              <td>{{ t.status }}</td>
+              <td><span class="badge {% if t.status == 'open' %}badge--ok{% else %}badge--muted{% endif %}">{{ t.status }}</span></td>
+              <td>
+                {% if t.notification_id %}
+                  <span class="badge badge--muted">От учителя</span>
+                {% else %}
+                  <span class="badge badge--ok">Поддержка</span>
+                {% endif %}
+              </td>
               <td>{% if t.is_important %}Да{% else %}Нет{% endif %}</td>
               <td>{{ t.created_at|date:"d.m.Y H:i" }}</td>
               <td><a class="btn btn--secondary btn--sm" href="{% url 'communications:ticket_detail' t.id %}">Открыть</a></td>
             </tr>
           {% empty %}
-            <tr><td colspan="6">Тикетов нет.</td></tr>
+            <tr><td colspan="7">Тикетов нет.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 {% endblock %}
-

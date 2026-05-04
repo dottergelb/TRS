@@ -1,177 +1,293 @@
 {% extends "base.html" %}
 
 {% block title %}Статистика учителя{% endblock %}
+{% block section_title %}Моя статистика{% endblock %}
 {% block container_class %}container--wide{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/style.css">
-  <style>
-    .teacher-kpis { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; }
-    .teacher-kpi { border:1px solid var(--border); border-radius:14px; background:#fff; padding:14px; text-align:center; }
-    .teacher-kpi__label { margin:0 0 8px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:#607089; }
-    .teacher-kpi__value { margin:0; font-size:30px; line-height:1; font-family:"Space Grotesk","Manrope",sans-serif; letter-spacing:-.03em; }
-    .teacher-stats-table th, .teacher-stats-table td { text-align:center; vertical-align:top; }
-    .teacher-details { margin:0; padding:0; list-style:none; display:grid; gap:2px; text-align:left; }
-    .teacher-details li { font-size:12px; color:#475569; }
-    @media (max-width: 900px) { .teacher-kpis { grid-template-columns:1fr; } }
-  </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/style.css">
+<style>
+  .stats-shell { display: grid; gap: 14px; }
+  .stats-toolbar { position: sticky; top: calc(var(--top-nav-height) + 8px); z-index: 800; }
+  .stats-toolbar__body { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .stats-toolbar__left { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  .stats-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .kpi { border: 1px solid var(--border); border-radius: 14px; background: #fff; padding: 14px; }
+  .kpi__label { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #607089; }
+  .kpi__value { margin: 0; font-size: 30px; line-height: 1; font-family: "Space Grotesk","Manrope",sans-serif; letter-spacing: -.03em; }
+  .stats-main { display: grid; grid-template-columns: 1.7fr 1fr; gap: 12px; align-items: stretch; }
+  .daily-chart { display: flex; align-items: flex-end; gap: 8px; min-height: 210px; overflow-x: auto; padding: 8px 4px 0; }
+  .daily-col { min-width: 20px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .daily-col__bar { width: 100%; min-height: 2px; border-radius: 8px 8px 2px 2px; background: linear-gradient(180deg, #0f5cd6, #0f766e); }
+  .daily-col__lbl { font-size: 11px; color: var(--muted); writing-mode: vertical-rl; transform: rotate(180deg); }
+  .mini-metrics { display: grid; gap: 8px; }
+  .mini-metric { border: 1px solid var(--border); border-radius: 12px; padding: 9px 10px; background: #fff; display: grid; gap: 3px; }
+  .mini-metric__label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; color: #607089; }
+  .mini-metric__value { font-size: 20px; font-family: "Space Grotesk","Manrope",sans-serif; letter-spacing: -.02em; }
+  .stats-scope { display: inline-flex; align-items: center; gap: 6px; padding: 4px; border-radius: 999px; border: 1px solid var(--border); background: #f8fafc; }
+  .stats-scope button { border: 0; border-radius: 999px; background: transparent; color: #475569; font-size: 12px; font-weight: 700; padding: 6px 10px; cursor: pointer; }
+  .stats-scope button.is-active { background: #fff; color: #0f5cd6; box-shadow: 0 2px 8px rgba(2,6,23,.08); }
+  .hidden { display: none !important; }
+  .stats-date-input { min-width: 150px; height: 40px; font-weight: 700; background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(248,250,252,.96)); border-color: rgba(15,92,214,.22); }
+  .teacher-details { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; text-align: left; }
+  .teacher-details li { font-size: 12px; color: #475569; }
+  @media (max-width: 1200px) { .stats-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats-main { grid-template-columns: 1fr; } }
+  @media (max-width: 780px) { .stats-kpis { grid-template-columns: 1fr; } .stats-toolbar__left { width: 100%; } }
+</style>
 {% endblock %}
 
 {% block content %}
+<div class="stats-shell">
   <div class="page-header">
     <div>
       <h1 class="page-title">Статистика учителя</h1>
       <p class="page-subtitle">Учитель: <strong>{{ teacher_name }}</strong></p>
       {% if not teacher_found %}
-        <p class="page-subtitle" style="color:#b91c1c;">Профиль учителя не найден в таблице преподавателей. Обратитесь к администратору.</p>
+        <p class="page-subtitle text-danger">Профиль учителя не найден в таблице преподавателей.</p>
       {% endif %}
     </div>
   </div>
 
-  <div class="card">
-    <div class="card__body">
-      <div class="row" style="align-items:flex-end;">
-        <div class="field" style="min-width:220px;">
-          <label class="label" for="monthPicker">Месяц</label>
-          <input id="monthPicker" type="text" placeholder="Выберите месяц">
+  <div class="card stats-toolbar">
+    <div class="card__body stats-toolbar__body">
+      <div class="stats-toolbar__left">
+        <div class="field">
+          <label class="label">Режим</label>
+          <div class="stats-scope">
+            <button type="button" id="modeDay" class="is-active">День</button>
+            <button type="button" id="modePeriod">Период</button>
+            <button type="button" id="modeMonth">Месяц</button>
+          </div>
         </div>
+
+        <div class="field" id="dayField">
+          <label class="label" for="dayDate">Дата</label>
+          <input id="dayDate" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
+        </div>
+        <div class="field hidden" id="periodFromField">
+          <label class="label" for="periodFrom">От</label>
+          <input id="periodFrom" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
+        </div>
+        <div class="field hidden" id="periodToField">
+          <label class="label" for="periodTo">До</label>
+          <input id="periodTo" class="stats-date-input" type="text" placeholder="ГГГГ-ММ-ДД">
+        </div>
+        <div class="field hidden" id="monthField">
+          <label class="label" for="monthDate">Месяц</label>
+          <input id="monthDate" class="stats-date-input" type="text" placeholder="ГГГГ-ММ">
+        </div>
+      </div>
+      <div>
         <button id="loadBtn" class="btn btn--primary" type="button">Обновить</button>
       </div>
     </div>
   </div>
 
-  <div class="teacher-kpis" style="margin-top:12px;">
-    <div class="teacher-kpi">
-      <p class="teacher-kpi__label">Всего замещений</p>
-      <p class="teacher-kpi__value" id="kpiTotal">0</p>
+  <div class="stats-kpis">
+    <div class="kpi"><p class="kpi__label">Всего замещений</p><p id="kpiTotal" class="kpi__value">0</p></div>
+    <div class="kpi"><p class="kpi__label">Основные</p><p id="kpiRegular" class="kpi__value">0</p></div>
+    <div class="kpi"><p class="kpi__label">Производственная необходимость</p><p id="kpiSpecial" class="kpi__value">0</p></div>
+    <div class="kpi"><p class="kpi__label">Активных дней</p><p id="kpiDays" class="kpi__value">0</p></div>
+  </div>
+
+  <div class="stats-main">
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Динамика по дням</h2>
+      </div>
+      <div class="card__body">
+        <div id="dailyChart" class="daily-chart"></div>
+      </div>
     </div>
-    <div class="teacher-kpi">
-      <p class="teacher-kpi__label">Дней с замещениями</p>
-      <p class="teacher-kpi__value" id="kpiDays">0</p>
-    </div>
-    <div class="teacher-kpi">
-      <p class="teacher-kpi__label">Максимум за день</p>
-      <p class="teacher-kpi__value" id="kpiPeak">0</p>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Кратко по периоду</h2>
+      </div>
+      <div class="card__body mini-metrics">
+        <div class="mini-metric"><span class="mini-metric__label">Среднее в день</span><span id="metricAvg" class="mini-metric__value">0</span></div>
+        <div class="mini-metric"><span class="mini-metric__label">Пик за день</span><span id="metricPeak" class="mini-metric__value">0</span></div>
+        <div class="mini-metric"><span class="mini-metric__label">Дней с заменами</span><span id="metricActive" class="mini-metric__value">0</span></div>
+      </div>
     </div>
   </div>
 
-  <div class="card" style="margin-top:12px;">
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Детализация по дням</h2>
+    </div>
     <div class="card__body">
       <div class="table-responsive">
         <table class="table teacher-stats-table">
           <thead>
-            <tr>
-              <th>Дата</th>
-              <th>Основные</th>
-              <th>Что замещал</th>
-            </tr>
+            <tr><th>Дата</th><th>Основные</th><th>Что замещал</th></tr>
           </thead>
           <tbody id="dailyBody"></tbody>
         </table>
       </div>
-      <div id="emptyState" class="page-subtitle" style="margin-top:8px;" hidden>За выбранный месяц данных нет.</div>
+      <div id="emptyState" class="page-subtitle" hidden>За выбранный период данных нет.</div>
     </div>
   </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/index.js"></script>
-  <script>
-    (function () {
-      const monthPicker = document.getElementById('monthPicker');
-      const loadBtn = document.getElementById('loadBtn');
-      const kpiTotal = document.getElementById('kpiTotal');
-      const kpiDays = document.getElementById('kpiDays');
-      const kpiPeak = document.getElementById('kpiPeak');
-      const dailyBody = document.getElementById('dailyBody');
-      const emptyState = document.getElementById('emptyState');
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/monthSelect/index.js"></script>
+<script>
+  (function () {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const monthStr = today.toISOString().slice(0, 7);
 
-      const now = new Date();
-      const initialMonth = now.toISOString().slice(0, 7);
-      let selectedMonth = initialMonth;
+    const modeDayBtn = document.getElementById('modeDay');
+    const modePeriodBtn = document.getElementById('modePeriod');
+    const modeMonthBtn = document.getElementById('modeMonth');
+    const dayField = document.getElementById('dayField');
+    const periodFromField = document.getElementById('periodFromField');
+    const periodToField = document.getElementById('periodToField');
+    const monthField = document.getElementById('monthField');
+    const dayDate = document.getElementById('dayDate');
+    const periodFrom = document.getElementById('periodFrom');
+    const periodTo = document.getElementById('periodTo');
+    const monthDate = document.getElementById('monthDate');
+    const loadBtn = document.getElementById('loadBtn');
 
-      flatpickr(monthPicker, {
-        dateFormat: 'Y-m',
-        defaultDate: initialMonth + '-01',
-        plugins: [new monthSelectPlugin({ shorthand: true, dateFormat: 'Y-m', altFormat: 'F Y' })],
-        onChange: function (dates, str) {
-          selectedMonth = str || initialMonth;
-          loadStats();
-        }
+    const kpiTotal = document.getElementById('kpiTotal');
+    const kpiRegular = document.getElementById('kpiRegular');
+    const kpiSpecial = document.getElementById('kpiSpecial');
+    const kpiDays = document.getElementById('kpiDays');
+    const metricAvg = document.getElementById('metricAvg');
+    const metricPeak = document.getElementById('metricPeak');
+    const metricActive = document.getElementById('metricActive');
+    const dailyChart = document.getElementById('dailyChart');
+    const dailyBody = document.getElementById('dailyBody');
+    const emptyState = document.getElementById('emptyState');
+
+    let mode = 'day';
+    dayDate.value = todayStr;
+    periodFrom.value = todayStr;
+    periodTo.value = todayStr;
+    monthDate.value = monthStr;
+
+    function setMode(next) {
+      mode = next;
+      modeDayBtn.classList.toggle('is-active', next === 'day');
+      modePeriodBtn.classList.toggle('is-active', next === 'period');
+      modeMonthBtn.classList.toggle('is-active', next === 'month');
+      dayField.classList.toggle('hidden', next !== 'day');
+      periodFromField.classList.toggle('hidden', next !== 'period');
+      periodToField.classList.toggle('hidden', next !== 'period');
+      monthField.classList.toggle('hidden', next !== 'month');
+    }
+
+    function esc(v) {
+      return String(v == null ? '' : v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    }
+
+    function params() {
+      const p = new URLSearchParams();
+      p.set('mode', mode);
+      if (mode === 'day') p.set('date', dayDate.value || todayStr);
+      else if (mode === 'period') { p.set('date_from', periodFrom.value || todayStr); p.set('date_to', periodTo.value || todayStr); }
+      else p.set('month', monthDate.value || monthStr);
+      return p;
+    }
+
+    function renderDailyChart(rows) {
+      dailyChart.innerHTML = '';
+      const data = Array.isArray(rows) ? rows.slice(-31) : [];
+      if (!data.length) {
+        dailyChart.innerHTML = '<p class="page-subtitle" style="margin:0;">Нет данных</p>';
+        return;
+      }
+      const max = data.reduce((a, x) => Math.max(a, x.count || 0), 0);
+      data.forEach((item) => {
+        const col = document.createElement('div');
+        col.className = 'daily-col';
+        const h = max > 0 ? Math.max(2, Math.round(((item.count || 0) / max) * 170)) : 2;
+        col.innerHTML = '<div class="daily-col__bar" style="height:' + h + 'px"></div><div class="daily-col__lbl">' + esc(item.label || '') + '</div>';
+        dailyChart.appendChild(col);
       });
+    }
 
-      function esc(v) {
-        return String(v == null ? '' : v)
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#39;');
+    function render(data) {
+      const totals = data.totals || {};
+      const daily = Array.isArray(data.daily) ? data.daily : [];
+      const detailsMap = (data && typeof data.daily_details === 'object' && data.daily_details) ? data.daily_details : {};
+
+      const regular = totals.regular_replacements || 0;
+      const special = totals.special_replacements || 0;
+      const all = (totals.replacement_lessons != null) ? totals.replacement_lessons : (regular + special);
+      const activeDays = daily.filter((x) => (x.count || 0) > 0).length;
+      const peak = daily.reduce((a, x) => Math.max(a, x.count || 0), 0);
+      const avg = daily.length ? (daily.reduce((a, x) => a + (x.count || 0), 0) / daily.length) : 0;
+
+      kpiTotal.textContent = String(all);
+      kpiRegular.textContent = String(regular);
+      kpiSpecial.textContent = String(special);
+      kpiDays.textContent = String(activeDays);
+      metricAvg.textContent = avg.toFixed(1);
+      metricPeak.textContent = String(peak);
+      metricActive.textContent = String(activeDays);
+
+      renderDailyChart(daily);
+
+      const used = daily.filter((x) => (x.regular_replacements || 0) > 0);
+      dailyBody.innerHTML = '';
+      if (!used.length) {
+        emptyState.hidden = false;
+        return;
       }
+      emptyState.hidden = true;
+      dailyBody.innerHTML = used.map((x) => {
+        const details = (Array.isArray(detailsMap[x.date]) ? detailsMap[x.date] : []).filter((d) => !d.is_special);
+        const detailsHtml = details.length
+          ? ('<ul class="teacher-details">' + details.map((d) => {
+            const hasLessonNumber = d.lesson_number !== null && d.lesson_number !== undefined && d.lesson_number !== '';
+            const lesson = hasLessonNumber ? ('Урок ' + esc(d.lesson_number)) : 'Отдельный урок';
+            const cls = d.class_group ? (', ' + esc(d.class_group)) : '';
+            const orig = d.original_teacher ? (' — за ' + esc(d.original_teacher)) : '';
+            return '<li>' + lesson + cls + orig + '</li>';
+          }).join('') + '</ul>')
+          : '—';
+        return '<tr><td>' + esc(x.date || '') + '</td><td>' + esc(x.regular_replacements || 0) + '</td><td>' + detailsHtml + '</td></tr>';
+      }).join('');
+    }
 
-      function render(data) {
-        const totals = data.totals || {};
-        const daily = Array.isArray(data.daily) ? data.daily : [];
-        const detailsMap = (data && typeof data.daily_details === 'object' && data.daily_details) ? data.daily_details : {};
-        const used = daily.filter(function (x) { return (x.regular_replacements || 0) > 0; });
-        const peak = used.reduce(function (acc, x) { return Math.max(acc, x.regular_replacements || 0); }, 0);
-
-        kpiTotal.textContent = String(totals.regular_replacements || 0);
-        kpiDays.textContent = String(used.length);
-        kpiPeak.textContent = String(peak);
-
-        dailyBody.innerHTML = '';
-        if (!used.length) {
-          emptyState.hidden = false;
-          return;
-        }
-        emptyState.hidden = true;
-        dailyBody.innerHTML = used.map(function (x) {
-          const details = (Array.isArray(detailsMap[x.date]) ? detailsMap[x.date] : []).filter(function (d) {
-            return !d.is_special;
-          });
-          const detailsHtml = details.length
-              ? ('<ul class="teacher-details">' + details.map(function (d) {
-                const hasLessonNumber = d.lesson_number !== null && d.lesson_number !== undefined && d.lesson_number !== '';
-                const lesson = hasLessonNumber ? ('Урок ' + esc(d.lesson_number)) : 'Отдельный урок';
-                const cls = d.class_group ? (', ' + esc(d.class_group)) : '';
-                const orig = d.original_teacher ? (' — за ' + esc(d.original_teacher)) : '';
-                return '<li>' + lesson + cls + orig + '</li>';
-              }).join('') + '</ul>')
-            : '—';
-          return (
-            '<tr>' +
-              '<td>' + esc(x.date || '') + '</td>' +
-              '<td>' + esc(x.regular_replacements || 0) + '</td>' +
-              '<td>' + detailsHtml + '</td>' +
-            '</tr>'
-          );
-        }).join('');
+    async function load() {
+      loadBtn.disabled = true;
+      try {
+        const resp = await fetch('/replacements/api/stats/?' + params().toString(), { credentials: 'same-origin' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Ошибка загрузки статистики');
+        render(data);
+      } catch (err) {
+        if (window.AppUI && typeof window.AppUI.toast === 'function') window.AppUI.toast(err.message || 'Ошибка', 'danger');
+      } finally {
+        loadBtn.disabled = false;
       }
+    }
 
-      async function loadStats() {
-        loadBtn.disabled = true;
-        try {
-          const params = new URLSearchParams();
-          params.set('mode', 'month');
-          params.set('month', selectedMonth);
-          const res = await fetch('/replacements/api/stats/?' + params.toString(), { credentials: 'same-origin' });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Ошибка загрузки статистики');
-          render(data);
-        } catch (err) {
-          if (window.AppUI && typeof window.AppUI.toast === 'function') {
-            window.AppUI.toast(err.message || 'Ошибка', 'danger');
-          }
-        } finally {
-          loadBtn.disabled = false;
-        }
+    if (window.flatpickr) {
+      const ru = window.flatpickr.l10ns && window.flatpickr.l10ns.ru ? window.flatpickr.l10ns.ru : undefined;
+      window.flatpickr(dayDate, { locale: ru, dateFormat: 'Y-m-d', allowInput: true, disableMobile: true });
+      window.flatpickr(periodFrom, { locale: ru, dateFormat: 'Y-m-d', allowInput: true, disableMobile: true });
+      window.flatpickr(periodTo, { locale: ru, dateFormat: 'Y-m-d', allowInput: true, disableMobile: true });
+      if (typeof window.monthSelectPlugin === 'function') {
+        window.flatpickr(monthDate, { locale: ru, allowInput: true, disableMobile: true, dateFormat: 'Y-m', plugins: [new window.monthSelectPlugin({ shorthand: true, dateFormat: 'Y-m', altFormat: 'F Y' })] });
       }
+    }
 
-      loadBtn.addEventListener('click', loadStats);
-      loadStats();
-    })();
-  </script>
+    modeDayBtn.addEventListener('click', () => { setMode('day'); load(); });
+    modePeriodBtn.addEventListener('click', () => { setMode('period'); load(); });
+    modeMonthBtn.addEventListener('click', () => { setMode('month'); load(); });
+    [dayDate, periodFrom, periodTo, monthDate].forEach((i) => i && i.addEventListener('change', load));
+    loadBtn.addEventListener('click', load);
+
+    setMode('day');
+    load();
+  })();
+</script>
 {% endblock %}

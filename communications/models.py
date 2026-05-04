@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils.text import get_valid_filename
+from accounts.school_scope import SchoolScopedManager
 
 
 class ChatMessage(models.Model):
@@ -11,6 +12,7 @@ class ChatMessage(models.Model):
         (TYPE_SYSTEM, "Системное"),
     )
 
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="chat_messages")
     sender = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -35,6 +37,8 @@ class ChatMessage(models.Model):
         blank=True,
         related_name="chat_messages",
     )
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_chat_message"
@@ -69,6 +73,7 @@ class SystemNotification(models.Model):
         (STATUS_QUESTION, "Есть вопросы"),
     )
 
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="system_notifications")
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -93,6 +98,8 @@ class SystemNotification(models.Model):
     read_at = models.DateTimeField(null=True, blank=True)
     acted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_system_notification"
@@ -100,6 +107,7 @@ class SystemNotification(models.Model):
 
 
 class NotificationReplacementItem(models.Model):
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="notification_items")
     notification = models.ForeignKey(
         SystemNotification,
         on_delete=models.CASCADE,
@@ -115,6 +123,8 @@ class NotificationReplacementItem(models.Model):
     original_teacher_name = models.CharField(max_length=255, blank=True, default="")
     replacement_teacher_name = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_notification_replacement_item"
@@ -122,6 +132,7 @@ class NotificationReplacementItem(models.Model):
 
 
 class NotificationStatus(models.Model):
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="notification_statuses")
     notification = models.ForeignKey(
         SystemNotification,
         on_delete=models.CASCADE,
@@ -136,6 +147,8 @@ class NotificationStatus(models.Model):
         related_name="changed_notification_statuses",
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_notification_status"
@@ -150,6 +163,7 @@ class Ticket(models.Model):
         (STATUS_CLOSED, "Закрыт"),
     )
 
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="tickets")
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -175,6 +189,8 @@ class Ticket(models.Model):
         blank=True,
         related_name="tickets_closed",
     )
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_ticket"
@@ -189,6 +205,7 @@ class TicketParticipant(models.Model):
         (ROLE_ADMIN, "Администратор"),
     )
 
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="ticket_participants")
     ticket = models.ForeignKey(
         Ticket,
         on_delete=models.CASCADE,
@@ -201,6 +218,8 @@ class TicketParticipant(models.Model):
     )
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_ticket_participant"
@@ -208,6 +227,7 @@ class TicketParticipant(models.Model):
 
 
 class TicketMessage(models.Model):
+    school = models.ForeignKey("accounts.School", on_delete=models.SET_NULL, null=True, blank=True, related_name="ticket_messages")
     ticket = models.ForeignKey(
         Ticket,
         on_delete=models.CASCADE,
@@ -221,9 +241,30 @@ class TicketMessage(models.Model):
         related_name="ticket_messages",
     )
     text = models.TextField()
+    attachment = models.FileField(upload_to="ticket_attachments/%Y/%m/%d/", null=True, blank=True)
+    attachment_name = models.CharField(max_length=255, blank=True, default="")
+    attachment_mime = models.CharField(max_length=120, blank=True, default="")
     is_system = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    objects = SchoolScopedManager()
+    all_objects = models.Manager()
 
     class Meta:
         db_table = "communications_ticket_message"
         ordering = ["created_at"]
+
+    @property
+    def safe_attachment_name(self) -> str:
+        if self.attachment_name:
+            return self.attachment_name
+        if self.attachment:
+            return get_valid_filename(self.attachment.name.rsplit("/", 1)[-1])
+        return ""
+
+    @property
+    def is_image_attachment(self) -> bool:
+        mime = (self.attachment_mime or "").lower().strip()
+        if mime.startswith("image/"):
+            return True
+        filename = self.safe_attachment_name.lower()
+        return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"))

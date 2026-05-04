@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 
 {% block title %}Тикет{% endblock %}
+{% block section_title %}Тикет{% endblock %}
 {% block container_class %}container--wide{% endblock %}
 
 {% block content %}
-  <div class="page-header">
+  <div
+    class="page-header"
+    id="ticketDetailRoot"
+    data-messages-api="{% url 'communications:ticket_messages_api' ticket.id %}"
+  >
     <div>
       <h1 class="page-title">{{ ticket.subject }}</h1>
       <p class="page-subtitle">
-        Автор: {{ ticket.author.full_name|default:ticket.author.username }} ·
+        Автор: {{ ticket.author.full_name|default:ticket.author.username }}{{ ticket_author_suffix }} ·
         Статус: {{ ticket.status }} ·
         {% if ticket.is_important %}⭐ Важный{% endif %}
       </p>
@@ -36,16 +41,29 @@
 
   <div class="card">
     <div class="card__body">
-      <div class="table-responsive" style="max-height:460px;">
+      <div class="table-responsive ticket-messages">
         <table class="table">
-          <tbody>
+          <tbody id="ticketMessagesBody">
             {% for m in messages_list %}
-              <tr>
-                <td style="width:220px;">
-                  <b>{% if m.author %}{{ m.author.full_name|default:m.author.username }}{% else %}Система{% endif %}</b><br>
-                  <span class="muted">{{ m.created_at|date:"d.m.Y H:i" }}</span>
+              <tr data-msg-id="{{ m.obj.id }}">
+                <td class="ticket-author-col">
+                  <b>{{ m.author_name }}{{ m.author_suffix }}</b><br>
+                  <span class="muted">{{ m.obj.created_at|date:"d.m.Y H:i" }}</span>
                 </td>
-                <td style="white-space:pre-wrap;">{{ m.text }}</td>
+                <td class="ticket-text-col">
+                  {% if m.obj.text %}<div style="white-space:pre-wrap;">{{ m.obj.text }}</div>{% endif %}
+                  {% if m.obj.attachment %}
+                    <div style="margin-top:6px;">
+                      {% if m.obj.is_image_attachment %}
+                        <a href="{{ m.obj.attachment.url }}" target="_blank" rel="noopener">
+                          <img src="{{ m.obj.attachment.url }}" alt="{{ m.obj.safe_attachment_name }}" style="max-width:260px;max-height:180px;border-radius:6px;">
+                        </a>
+                      {% else %}
+                        <a href="{{ m.obj.attachment.url }}" target="_blank" rel="noopener">📎 {{ m.obj.safe_attachment_name|default:"Файл" }}</a>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                </td>
               </tr>
             {% empty %}
               <tr><td>Сообщений нет.</td></tr>
@@ -55,10 +73,15 @@
       </div>
 
       {% if can_write %}
-        <form method="post" style="margin-top:10px;">
+        <form method="post" class="stack mt-8" enctype="multipart/form-data">
           {% csrf_token %}
+          {{ form.non_field_errors }}
           {{ form.text }}
-          <button class="btn btn--primary" type="submit" style="margin-top:8px;">Отправить</button>
+          {{ form.attachment }}
+          <div class="row">
+            <button type="button" class="btn btn--secondary btn--sm" id="ticketEmojiBtn">😀 Эмодзи</button>
+            <button class="btn btn--primary" type="submit">Отправить</button>
+          </div>
         </form>
       {% else %}
         <p class="page-subtitle">Тикет закрыт, отправка сообщений недоступна.</p>
@@ -67,3 +90,78 @@
   </div>
 {% endblock %}
 
+{% block extra_js %}
+<script>
+  (function () {
+    const root = document.getElementById("ticketDetailRoot");
+    const body = document.getElementById("ticketMessagesBody");
+    if (!root || !body) return;
+    const apiUrl = root.getAttribute("data-messages-api");
+    if (!apiUrl) return;
+
+    const textArea = document.querySelector("textarea[name='text']");
+    const emojiBtn = document.getElementById("ticketEmojiBtn");
+    if (emojiBtn && textArea) {
+      const palette = ["😀","😁","😂","😊","😉","😍","👍","🙏","🔥","✅","❗","⚠️","📌","📎"];
+      emojiBtn.addEventListener("click", function () {
+        const current = textArea.value || "";
+        textArea.value = current + (current && !current.endsWith(" ") ? " " : "") + palette[Math.floor(Math.random() * palette.length)] + " ";
+        textArea.focus();
+      });
+    }
+
+    function renderMessages(messages) {
+      const prevScrollBottom = body.parentElement.scrollHeight - body.parentElement.scrollTop - body.parentElement.clientHeight;
+      body.innerHTML = "";
+      messages.forEach(function (m) {
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-msg-id", String(m.id));
+
+        const tdAuthor = document.createElement("td");
+        tdAuthor.className = "ticket-author-col";
+        tdAuthor.innerHTML = "<b>" + (m.author_name || "Система") + (m.author_suffix || "") + "</b><br><span class='muted'>" + (m.created_at || "") + "</span>";
+
+        const tdText = document.createElement("td");
+        tdText.className = "ticket-text-col";
+        if (m.text) {
+          const textDiv = document.createElement("div");
+          textDiv.style.whiteSpace = "pre-wrap";
+          textDiv.textContent = m.text;
+          tdText.appendChild(textDiv);
+        }
+        if (m.attachment_url) {
+          const wrap = document.createElement("div");
+          wrap.style.marginTop = "6px";
+          if (m.attachment_is_image) {
+            wrap.innerHTML = "<a target='_blank' rel='noopener' href='" + m.attachment_url + "'><img style='max-width:260px;max-height:180px;border-radius:6px;' src='" + m.attachment_url + "' alt=''></a>";
+          } else {
+            wrap.innerHTML = "<a target='_blank' rel='noopener' href='" + m.attachment_url + "'>📎 " + (m.attachment_name || "Файл") + "</a>";
+          }
+          tdText.appendChild(wrap);
+        }
+
+        tr.appendChild(tdAuthor);
+        tr.appendChild(tdText);
+        body.appendChild(tr);
+      });
+      const isNearBottom = prevScrollBottom < 40;
+      if (isNearBottom) {
+        body.parentElement.scrollTop = body.parentElement.scrollHeight;
+      }
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch(apiUrl, {credentials: "same-origin", cache: "no-store"});
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !Array.isArray(data.messages)) return;
+        renderMessages(data.messages);
+      } catch (e) {}
+    }
+
+    poll();
+    setInterval(poll, 3000);
+  })();
+</script>
+{% endblock %}

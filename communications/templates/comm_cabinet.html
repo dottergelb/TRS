@@ -2,51 +2,80 @@
 {% load user_icons %}
 
 {% block title %}Личный кабинет{% endblock %}
+{% block section_title %}Личный кабинет{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <h1 class="page-title">Личный кабинет</h1>
-      <p class="page-subtitle">{{ user|user_icon }} {{ user.full_name|default:user.username }}</p>
+      <h1 class="page-title">Добро пожаловать, {{ user.full_name|default:user.username }}</h1>
+      <p class="page-subtitle">{{ user|user_icon }} Рабочая панель управления заменами и коммуникацией.</p>
     </div>
   </div>
 
-  <div class="grid grid--3">
-    <div class="card"><div class="card__body"><h3>Новые уведомления</h3><p class="hero-title" style="font-size:36px;">{{ notifications_unread }}</p></div></div>
-    <div class="card"><div class="card__body"><h3>Непрочитанные сообщения</h3><p class="hero-title" style="font-size:36px;">{{ chat_unread }}</p></div></div>
-    <div class="card"><div class="card__body"><h3>Открытые тикеты</h3><p class="hero-title" style="font-size:36px;">{{ open_tickets }}</p></div></div>
-  </div>
+  <section class="kpi-grid" aria-label="Ключевые показатели">
+    <article class="kpi-card">
+      <p class="kpi-label">Новые уведомления</p>
+      <p class="kpi-value">{{ notifications_unread }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Непрочитанные сообщения</p>
+      <p class="kpi-value">{{ chat_unread }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Открытые тикеты</p>
+      <p class="kpi-value">{{ open_tickets }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Замещения сегодня</p>
+      <p class="kpi-value">—</p>
+    </article>
+  </section>
 
-  <div class="grid grid--2" style="margin-top:12px;">
-    <div class="card">
-      <div class="card__body">
-        <h3>Основные разделы</h3>
-        <div class="stack">
-          <a class="btn btn--primary" href="/replacements/calendar/">Календарь</a>
-          <a class="btn btn--secondary" href="/replacements/stats/">Статистика</a>
-          {% if user.is_superuser or user.is_admin %}
-            <a class="btn btn--secondary" href="{% url 'communications:notifications' %}">Системные уведомления</a>
-          {% endif %}
-          {% if not user.is_guest %}
-            <a class="btn btn--secondary" href="{% url 'communications:chats' %}">Сообщения</a>
-          {% endif %}
-          <a class="btn btn--secondary" href="{% url 'communications:tickets' %}">Тикеты</a>
+  <div class="grid grid--2" style="margin-top: 14px;">
+    <section class="card">
+      <div class="card__header">
+        <div class="card__headtext">
+          <h2 class="card__title">Быстрые действия</h2>
+          <p class="card__subtitle">Частые операции администратора и учителя.</p>
         </div>
       </div>
-    </div>
-    <div class="card">
       <div class="card__body">
-        <h3>Профиль</h3>
-        <p><b>Логин:</b> {{ user.username }}</p>
-        <p><b>ФИО:</b> {{ user|user_icon }} {{ user.full_name }}</p>
-        <p><b>Роль:</b>
+        <div class="quick-actions">
+          <a class="quick-action" href="/replacements/calendar/">Календарь</a>
+          <a class="quick-action" href="/replacements/stats/">Статистика</a>
+          {% if not user.is_guest %}
+            <a class="quick-action" href="{% url 'communications:chats' %}">Сообщения</a>
+          {% endif %}
+          <a class="quick-action" href="{% url 'communications:tickets' %}">Тикеты</a>
+          {% if user.is_superuser or user.can_upload %}
+            <a class="quick-action" href="/upload/">Загрузка</a>
+          {% endif %}
+          {% if user.is_superuser or user.can_users %}
+            <a class="quick-action" href="{% url 'accounts:user_list' %}">Пользователи</a>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <div class="card__headtext">
+          <h2 class="card__title">Профиль пользователя</h2>
+          <p class="card__subtitle">Параметры текущей учетной записи.</p>
+        </div>
+      </div>
+      <div class="card__body stack">
+        <div><strong>Логин:</strong> {{ user.username }}</div>
+        <div><strong>ФИО:</strong> {{ user|user_icon }} {{ user.full_name }}</div>
+        <div>
+          <strong>Роль:</strong>
           {% if user.is_superuser %}Суперпользователь
           {% elif user.is_admin %}Администратор
           {% elif user.is_teacher %}Учитель
           {% elif user.is_guest %}Гость
           {% else %}Пользователь{% endif %}
-        </p>
+        </div>
       </div>
-    </div>
+    </section>
   </div>
 {% endblock %}

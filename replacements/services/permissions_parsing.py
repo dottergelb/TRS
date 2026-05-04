@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET
 
 from ..audit import log_activity
+from accounts.school_scope import scope_queryset_for_school
 from ..models import ClassSchedule, Lesson, Replacement, SpecialReplacement, Teacher
 from ..scheduling import (
     FIRST_SHIFT_GRADES_SECONDARY,
@@ -81,11 +82,11 @@ def as_int(v, default=None):
 
 
 def _active_lessons():
-    return Lesson.objects.filter(is_active=True)
+    return scope_queryset_for_school(Lesson.objects.filter(is_active=True))
 
 
 def _teacher_replacements():
-    return Replacement.objects.exclude(replacement_teacher_id=F("original_teacher_id"))
+    return scope_queryset_for_school(Replacement.objects.exclude(replacement_teacher_id=F("original_teacher_id")))
 
 
 def _effective_shift_for_class(class_group: str, stored_shift: int | None = None) -> int | None:
@@ -102,7 +103,7 @@ def _effective_times_for_lesson(class_group: str, lesson_number: int, shift: int
     if grade is None:
         return fallback_start, fallback_end
 
-    rows = ClassSchedule.objects.filter(lesson_number=lesson_number, shift=int(shift))
+    rows = scope_queryset_for_school(ClassSchedule.objects.filter(lesson_number=lesson_number, shift=int(shift)))
     cls_norm = (class_group or "").strip().lower()
     for row in rows:
         if (row.class_group or "").strip().lower() == cls_norm:

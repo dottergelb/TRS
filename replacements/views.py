@@ -31,6 +31,7 @@ from types import SimpleNamespace
 
 from .audit import log_activity
 from accounts.icon_service import get_icon_for_display_name
+from accounts.school_scope import get_current_school_id, is_project_level_user
 
 from .scheduling import (
     day_short_from_date,
@@ -74,6 +75,17 @@ def _resolve_teacher_for_user(user) -> Teacher | None:
 def _deny_guest_write_json(request):
     if _is_guest_user(request.user):
         return JsonResponse({"error": "Гостевой доступ: только просмотр"}, status=403)
+    return None
+
+
+def _deny_project_write_without_active_school(request):
+    if is_project_level_user(request.user):
+        school_id = get_current_school_id()
+        if not school_id or school_id <= 0:
+            return JsonResponse(
+                {"error": "Для этого действия выберите школу в проектном кабинете."},
+                status=400,
+            )
     return None
 
 
@@ -1197,17 +1209,21 @@ def _run_docx_import_core(*, file_bytes: bytes, target_date, replace_all: bool) 
 
         created_count = 0
         for payload in to_create_by_lesson.values():
-            Replacement.objects.create(
+            _, created = Replacement.all_objects.update_or_create(
                 lesson=payload["lesson"],
                 date=target_date,
-                original_teacher=payload["original_teacher"],
-                replacement_teacher=payload["replacement_teacher"],
-                confirmed=True,
-                production_necessity=False,
-                ignore_in_reports=False,
-                replacement_classroom=payload["replacement_classroom"],
+                defaults={
+                    "school_id": getattr(payload["lesson"], "school_id", None),
+                    "original_teacher": payload["original_teacher"],
+                    "replacement_teacher": payload["replacement_teacher"],
+                    "confirmed": True,
+                    "production_necessity": False,
+                    "ignore_in_reports": False,
+                    "replacement_classroom": payload["replacement_classroom"],
+                },
             )
-            created_count += 1
+            if created:
+                created_count += 1
 
     return {
         "date": target_date.strftime("%Y-%m-%d"),
@@ -1273,6 +1289,8 @@ def activity_logs_view(request):
     user_q = (request.GET.get("user") or "").strip()
 
     qs = ActivityLog.objects.select_related("user").all()
+    # Hide global technical admin logs from school-level log view.
+    qs = qs.exclude(user__username__iexact="admin")
 
     if action:
         qs = qs.filter(action=action)
@@ -1283,7 +1301,12 @@ def activity_logs_view(request):
         )
 
     qs = qs.order_by("-created_at")[:500]
-    actions = list(ActivityLog.objects.values_list("action", flat=True).distinct().order_by("action"))
+    actions = list(
+        ActivityLog.objects.exclude(user__username__iexact="admin")
+        .values_list("action", flat=True)
+        .distinct()
+        .order_by("action")
+    )
 
     return render(request, "activity_logs.html", {
         "logs": qs,
@@ -1295,6 +1318,9 @@ def activity_logs_view(request):
 
 @login_required
 def save_replacements(request):
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
     from .services.replacements_heavy_service import save_replacements_service
     return save_replacements_service(request)
 
@@ -1475,6 +1501,9 @@ def save_cabinet_replacements(request):
     guest_forbidden = _deny_guest_write_json(request)
     if guest_forbidden:
         return guest_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
 
     if request.method != "POST":
         return JsonResponse({"error": "Метод не разрешён"}, status=405)
@@ -3002,6 +3031,9 @@ def update_specialization(request):
     guest_forbidden = _deny_guest_write_json(request)
     if guest_forbidden:
         return guest_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
 
                                                                                
     if not (request.user.is_superuser or getattr(request.user, 'can_editor', False)):
@@ -3188,7 +3220,10 @@ from .models import Lesson, Subject, Teacher
 
 
 @require_GET
+@login_required
 def get_lesson_by_id(request, lesson_id):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     if _use_gsheets_backend():
         lesson = None
         for l in _gs_active_lessons_rows():
@@ -3321,7 +3356,11 @@ def get_lessons(request, teacher_id, day):
     return JsonResponse({"lessons": lesson_data})
 
 
+@login_required
+@require_GET
 def get_teacher(request, teacher_id):
+    if not _can_calendar_read(request.user):
+        return HttpResponse("Forbidden", status=403)
     if _use_gsheets_backend():
         name = _gs_teacher_map().get(int(teacher_id))
         if name is None:
@@ -4292,6 +4331,16 @@ def replacement_summary_report(request):
     from django.conf import settings
 
     try:
+        def _subject_with_combination_mark(subject_name: str, is_combination: bool) -> str:
+            base = (subject_name or "").strip() or "Без предмета"
+            if not is_combination:
+                return base
+            if base in {"Без предмета", "-"}:
+                return base
+            if "(Совмещение)" in base:
+                return base
+            return f"{base} (Совмещение)"
+
         mode_norm, start, end, range_label = _report_range_from_request(request)
 
         if _use_gsheets_backend():
@@ -4325,6 +4374,27 @@ def replacement_summary_report(request):
                 lesson = lesson_map.get(lesson_id) if lesson_id is not None else None
                 subject_id = as_int((lesson or {}).get("subject_id_subject"))
                 subj = subject_map.get(subject_id, "Без предмета") if subject_id is not None else "Без предмета"
+                # Для gsheets-бэкенда: считаем "совмещением" параллельное замещение
+                # у того же замещающего в тот же день/класс/номер урока.
+                is_combination = False
+                if repl_id is not None and lesson is not None:
+                    cls = str((lesson or {}).get("class_group") or "")
+                    num = as_int((lesson or {}).get("lesson_number"))
+                    if cls and num is not None:
+                        for r2 in _gs_store().get_table_dicts("replacements_replacement"):
+                            if r2 is r:
+                                continue
+                            if as_int(r2.get("replacement_teacher_id")) != repl_id:
+                                continue
+                            if str(r2.get("date") or "") != d_raw:
+                                continue
+                            l2 = lesson_map.get(as_int(r2.get("lesson_id")))
+                            if not l2:
+                                continue
+                            if str(l2.get("class_group") or "") == cls and as_int(l2.get("lesson_number")) == num:
+                                is_combination = True
+                                break
+                subj = _subject_with_combination_mark(subj, is_combination)
 
                 grouped[(repl_name, orig_name_base)][subj] += 1
                 if orig_is_vacancy and subj and subj != "Без предмета":
@@ -4374,6 +4444,34 @@ def replacement_summary_report(request):
                 orig_name_base = (r.original_teacher.full_name if r.original_teacher else "Вакансия")
 
                 subj = getattr(getattr(r.lesson, "subject", None), "name", None) or "Без предмета"
+                is_combination = False
+                if r.lesson and r.replacement_teacher_id:
+                    # 1) У замещающего есть свой параллельный урок той же пары.
+                    has_parallel_lesson = (
+                        Lesson.objects.filter(
+                            teacher_id=r.replacement_teacher_id,
+                            day_of_week=r.lesson.day_of_week,
+                            lesson_number=r.lesson.lesson_number,
+                            class_group=r.lesson.class_group,
+                            is_active=True,
+                        )
+                        .exclude(id=r.lesson_id)
+                        .exists()
+                    )
+                    # 2) Или у него есть другое замещение той же пары в эту дату.
+                    has_parallel_replacement = (
+                        _teacher_replacements()
+                        .filter(
+                            date=r.date,
+                            replacement_teacher_id=r.replacement_teacher_id,
+                            lesson__class_group=r.lesson.class_group,
+                            lesson__lesson_number=r.lesson.lesson_number,
+                        )
+                        .exclude(id=r.id)
+                        .exists()
+                    )
+                    is_combination = has_parallel_lesson or has_parallel_replacement
+                subj = _subject_with_combination_mark(subj, is_combination)
                 grouped[(repl_name, orig_name_base)][subj] += 1
                 if orig_is_vacancy and subj and subj != "Без предмета":
                     vacancy_subjects[(repl_name, orig_name_base)].add(subj)
@@ -4808,6 +4906,17 @@ def replacement_teacher_summary_docx(request):
                 return "замещения"
             return "замещений"
 
+        def combination_word(count: int) -> str:
+            n = abs(count) % 100
+            n1 = n % 10
+            if 11 <= n <= 14:
+                return "предметов совмещения"
+            if n1 == 1:
+                return "предмет совмещение"
+            if 2 <= n1 <= 4:
+                return "предмета совмещения"
+            return "предметов совмещения"
+
         teacher_stats: dict[int, dict] = {}
         for r in rows:
             teacher_id = as_int(r.get("replacement_teacher_id"))
@@ -4824,11 +4933,30 @@ def replacement_teacher_summary_docx(request):
             class_group = str((lesson or {}).get("class_group") or "")
             grade = extract_grade(class_group) if class_group else None
             is_primary = grade is not None and grade <= 4
-            d_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0})
+            d_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0, "comb": 0})
             if is_primary:
                 d_entry["zn"] += 1
             else:
                 d_entry["zs"] += 1
+            is_combination = False
+            cls = str((lesson or {}).get("class_group") or "")
+            num = as_int((lesson or {}).get("lesson_number"))
+            if cls and num is not None:
+                for r2 in rows:
+                    if r2 is r:
+                        continue
+                    if as_int(r2.get("replacement_teacher_id")) != teacher_id:
+                        continue
+                    if str(r2.get("date") or "") != str(r.get("date") or ""):
+                        continue
+                    l2 = lesson_map.get(as_int(r2.get("lesson_id")))
+                    if not l2:
+                        continue
+                    if str(l2.get("class_group") or "") == cls and as_int(l2.get("lesson_number")) == num:
+                        is_combination = True
+                        break
+            if is_combination:
+                d_entry["comb"] += 1
 
         doc = Document()
         teachers_sorted = sorted(teacher_stats.values(), key=lambda x: x["name"].lower())
@@ -4843,6 +4971,7 @@ def replacement_teacher_summary_docx(request):
             for day_key in sorted(day_map.keys(), key=lambda d: datetime.strptime(d, "%d.%m.%Y")):
                 zs = day_map[day_key]["zs"]
                 zn = day_map[day_key]["zn"]
+                comb = day_map[day_key].get("comb", 0)
                 parts = []
                 if zs > 0:
                     parts.append(f"{zs} (ЗС)")
@@ -4853,7 +4982,8 @@ def replacement_teacher_summary_docx(request):
                 has_days = True
                 p_day = doc.add_paragraph()
                 p_day.add_run(f"Дата: {day_key}").bold = True
-                p_day.add_run(f" - {', '.join(parts)}")
+                suffix = f" (Из них {comb} {combination_word(comb)})" if comb > 0 else ""
+                p_day.add_run(f" - {', '.join(parts)}{suffix}")
 
             if not has_days:
                 doc.add_paragraph("—")
@@ -4919,6 +5049,17 @@ def replacement_teacher_summary_docx(request):
             return "замещения"
         return "замещений"
 
+    def combination_word(count: int) -> str:
+        n = abs(count) % 100
+        n1 = n % 10
+        if 11 <= n <= 14:
+            return "предметов совмещения"
+        if n1 == 1:
+            return "предмет совмещение"
+        if 2 <= n1 <= 4:
+            return "предмета совмещения"
+        return "предметов совмещения"
+
     teacher_map: dict[int, dict] = {}
     for r in reps:
         if not r.date or not r.replacement_teacher:
@@ -4936,11 +5077,38 @@ def replacement_teacher_summary_docx(request):
         day_key = r.date.strftime('%d.%m.%Y')
         grade = extract_grade(r.lesson.class_group) if r.lesson else None
         is_primary = grade is not None and grade <= 4
-        t_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0})
+        t_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0, "comb": 0})
         if is_primary:
             t_entry["zn"] += 1
         else:
             t_entry["zs"] += 1
+        is_combination = False
+        if r.lesson and r.replacement_teacher_id:
+            has_parallel_lesson = (
+                Lesson.objects.filter(
+                    teacher_id=r.replacement_teacher_id,
+                    day_of_week=r.lesson.day_of_week,
+                    lesson_number=r.lesson.lesson_number,
+                    class_group=r.lesson.class_group,
+                    is_active=True,
+                )
+                .exclude(id=r.lesson_id)
+                .exists()
+            )
+            has_parallel_replacement = (
+                _teacher_replacements()
+                .filter(
+                    date=r.date,
+                    replacement_teacher_id=r.replacement_teacher_id,
+                    lesson__class_group=r.lesson.class_group,
+                    lesson__lesson_number=r.lesson.lesson_number,
+                )
+                .exclude(id=r.id)
+                .exists()
+            )
+            is_combination = has_parallel_lesson or has_parallel_replacement
+        if is_combination:
+            t_entry["comb"] += 1
 
     for s in special_reps:
         if not s.date or not s.replacement_teacher:
@@ -4958,7 +5126,7 @@ def replacement_teacher_summary_docx(request):
         day_key = s.date.strftime('%d.%m.%Y')
         grade = extract_grade(s.class_group) if s.class_group else None
         is_primary = grade is not None and grade <= 4
-        t_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0})
+        t_entry = teacher_entry["days"].setdefault(day_key, {"zs": 0, "zn": 0, "comb": 0})
         if is_primary:
             t_entry["zn"] += 1
         else:
@@ -4977,6 +5145,7 @@ def replacement_teacher_summary_docx(request):
         for day_key in sorted(day_map.keys(), key=lambda d: datetime.strptime(d, "%d.%m.%Y")):
             zs = day_map[day_key]["zs"]
             zn = day_map[day_key]["zn"]
+            comb = day_map[day_key].get("comb", 0)
             parts = []
             if zs > 0:
                 parts.append(f"{zs} (ЗС)")
@@ -4987,7 +5156,8 @@ def replacement_teacher_summary_docx(request):
             has_days = True
             p_day = doc.add_paragraph()
             p_day.add_run(f"Дата: {day_key}").bold = True
-            p_day.add_run(f" - {', '.join(parts)}")
+            suffix = f" (Из них {comb} {combination_word(comb)})" if comb > 0 else ""
+            p_day.add_run(f" - {', '.join(parts)}{suffix}")
 
         if not has_days:
             doc.add_paragraph("—")
@@ -5201,6 +5371,9 @@ def upload(request):
                                             
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden and request.method == 'POST':
+        return school_forbidden
 
     if _use_gsheets_backend():
         active_count = sum(1 for l in _gs_store().get_table_dicts("replacements_lesson") if as_bool(l.get("is_active")))
@@ -5542,6 +5715,15 @@ def update_lesson_teacher(request, lesson_id):
     guest_forbidden = _deny_guest_write_json(request)
     if guest_forbidden:
         return guest_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
 
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
@@ -5654,6 +5836,9 @@ def reassign_teacher_lessons(request):
     guest_forbidden = _deny_guest_write_json(request)
     if guest_forbidden:
         return guest_forbidden
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
 
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)
@@ -5754,6 +5939,9 @@ def clear_schedule(request):
     """Deactivate the currently active schedule without touching bells or replacement history."""
     if _is_guest_user(request.user):
         return HttpResponse("Forbidden", status=403)
+    school_forbidden = _deny_project_write_without_active_school(request)
+    if school_forbidden:
+        return school_forbidden
 
     if not (request.user.is_superuser or getattr(request.user, 'can_upload', False)):
         return HttpResponse("Forbidden", status=403)

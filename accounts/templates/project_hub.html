@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Управление проектом{% endblock %}
+{% block section_title %}Проект{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Управление проектом</h1>
+      <p class="page-subtitle">Школы и заявки на подключение</p>
+    </div>
+    <div class="row">
+      <a class="btn btn--secondary" href="{% url 'accounts:project_users' %}">Пользователи проекта</a>
+    </div>
+  </div>
+  {% if active_school %}
+    <div class="alert alert--info" style="margin-bottom:12px;">Активная школа: <b>{{ active_school.name }}</b></div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card__header"><h2 class="card__title">Одобренные школы</h2></div>
+    <div class="card__body">
+      <ul>
+        {% for s in schools %}
+          <li>
+            {{ s.name }}
+            <form method="post" action="{% url 'accounts:project_select_school' s.id %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--secondary btn--sm">Открыть</button>
+            </form>
+          </li>
+        {% empty %}
+          <li>Школ пока нет</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="card mt-12">
+    <div class="card__header"><h2 class="card__title">Заявки (pending)</h2></div>
+    <div class="card__body">
+      <ul>
+        {% for s in pending_schools %}
+          <li>
+            {{ s.name }} — {{ s.contact_phone }} — {{ s.contact_email }}
+            <a class="btn btn--secondary btn--sm" href="{% url 'accounts:school_request_review' s.id %}">Открыть заявку</a>
+            <form method="post" action="{% url 'accounts:school_request_approve' s.id %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--primary btn--sm">Одобрить</button>
+            </form>
+            <form method="post" action="{% url 'accounts:school_request_reject' s.id %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm">Отклонить</button>
+            </form>
+          </li>
+        {% empty %}
+          <li>Новых заявок нет</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+{% endblock %}

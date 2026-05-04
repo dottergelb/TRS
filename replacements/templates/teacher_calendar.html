@@ -1,30 +1,11 @@
 {% extends "base.html" %}
 
 {% block title %}Календарь учителя{% endblock %}
+{% block section_title %}Мои замещения{% endblock %}
 {% block container_class %}container--wide{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <style>
-    .teacher-card { border-radius: 16px; }
-    .teacher-table td, .teacher-table th { white-space: nowrap; }
-    .teacher-empty { color: var(--muted); font-weight: 600; padding: 14px 0; }
-    .flatpickr-day.has-replacements:not(.selected) {
-      background: rgba(16, 185, 129, 0.16);
-      border-color: rgba(16, 185, 129, 0.35);
-    }
-    .flatpickr-day.has-replacements:not(.selected)::after {
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #0f766e;
-      position: absolute;
-      bottom: 4px;
-      left: 50%;
-      transform: translateX(-50%);
-    }
-  </style>
 {% endblock %}
 
 {% block content %}
@@ -33,15 +14,15 @@
       <h1 class="page-title">Календарь замещений учителя</h1>
       <p class="page-subtitle">Учитель: <strong>{{ teacher_name }}</strong></p>
       {% if not teacher_found %}
-        <p class="page-subtitle" style="color:#b91c1c;">Профиль учителя не найден в таблице преподавателей. Обратитесь к администратору.</p>
+        <p class="page-subtitle text-danger">Профиль учителя не найден в таблице преподавателей. Обратитесь к администратору.</p>
       {% endif %}
     </div>
   </div>
 
-  <div class="card teacher-card">
+  <div class="card">
     <div class="card__body">
-      <div class="row" style="align-items:flex-end;">
-        <div class="field" style="min-width:220px;">
+      <div class="row row--end">
+        <div class="field field--sm">
           <label class="label" for="datePicker">Дата</label>
           <input id="datePicker" type="text" placeholder="Выберите дату">
         </div>
@@ -50,7 +31,7 @@
     </div>
   </div>
 
-  <div class="card teacher-card" style="margin-top:12px;">
+  <div class="card mt-12">
     <div class="card__body">
       <div class="table-responsive">
         <table class="table teacher-table">
@@ -68,7 +49,7 @@
           <tbody id="rowsBody"></tbody>
         </table>
       </div>
-      <div id="emptyState" class="teacher-empty" hidden>На выбранную дату замещений нет.</div>
+      <div id="emptyState" class="page-subtitle" hidden>На выбранную дату замещений нет.</div>
     </div>
   </div>
 {% endblock %}
@@ -119,9 +100,7 @@
         onDayCreate: function (_, __, ___, dayElem) {
           const d = dayElem.dateObj;
           const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-          if (markedDates.has(key)) {
-            dayElem.classList.add('has-replacements');
-          }
+          if (markedDates.has(key)) dayElem.classList.add('has-replacements');
         },
         onChange: function (dates, str) {
           selectedDate = str || today;
@@ -177,9 +156,7 @@
           rowsBody.innerHTML = '';
           emptyState.hidden = false;
           emptyState.textContent = err.message || 'Ошибка загрузки данных';
-          if (window.AppUI && typeof window.AppUI.toast === 'function') {
-            window.AppUI.toast(err.message || 'Ошибка', 'danger');
-          }
+          if (window.AppUI && typeof window.AppUI.toast === 'function') window.AppUI.toast(err.message || 'Ошибка', 'danger');
         } finally {
           reloadBtn.disabled = false;
         }

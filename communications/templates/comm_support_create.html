@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Служба поддержки{% endblock %}
+{% block section_title %}Служба поддержки{% endblock %}
+
+{% block content %}
+<section class="page-card">
+  <h1 class="page-title">Создать тикет в службу поддержки</h1>
+  <form method="post" class="stack">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <label class="field">
+      <span class="field-label">{{ form.subject.label }}</span>
+      {{ form.subject }}
+      {{ form.subject.errors }}
+    </label>
+    <label class="field">
+      <span class="field-label">{{ form.text.label }}</span>
+      {{ form.text }}
+      {{ form.text.errors }}
+    </label>
+    <div class="actions-row">
+      <button type="submit" class="btn btn--primary">Создать тикет</button>
+      <a class="btn btn--secondary" href="{% url 'communications:tickets' %}">К тикетам</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

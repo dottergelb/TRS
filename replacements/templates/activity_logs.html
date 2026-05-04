@@ -1,22 +1,21 @@
 {% extends "base.html" %}
 
-{% block title %}Логи действий · ИС замещений{% endblock %}
+{% block title %}Логи действий{% endblock %}
+{% block section_title %}Логи действий{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <h1 class="page-title">🧾 Логи действий</h1>
-      <p class="page-subtitle">Показываются последние 500 событий. Фильтруйте по действию или пользователю.</p>
+      <h1 class="page-title">Логи действий</h1>
+      <p class="page-subtitle">Последние 500 событий с фильтрацией по действию и пользователю.</p>
     </div>
-    <div class="row">
-      <a class="btn btn--ghost" href="/replacements/">В меню</a>
-    </div>
+    <a class="btn btn--ghost" href="/replacements/">В меню</a>
   </div>
 
   <div class="card">
     <div class="card__body">
-      <form method="get" class="row" style="flex-wrap: wrap; gap: 10px;">
-        <div style="min-width: 220px;">
+      <form method="get" class="row" style="flex-wrap:wrap; gap:10px;">
+        <div style="min-width:220px;">
           <label class="field-label">Действие</label>
           <select class="field" name="action">
             <option value="">— все —</option>
@@ -25,11 +24,11 @@
             {% endfor %}
           </select>
         </div>
-        <div style="min-width: 260px; flex: 1;">
-          <label class="field-label">Пользователь (username/ФИО)</label>
-          <input class="field" name="user" value="{{ user_filter }}" placeholder="например: daniil или Иванов">
+        <div style="min-width:260px; flex:1;">
+          <label class="field-label">Пользователь</label>
+          <input class="field" name="user" value="{{ user_filter }}" placeholder="username или ФИО">
         </div>
-        <div style="align-self: end;">
+        <div style="align-self:end;" class="row">
           <button class="btn btn--primary" type="submit">Фильтр</button>
           <a class="btn btn--ghost" href="/replacements/logs/">Сброс</a>
         </div>
@@ -37,12 +36,12 @@
     </div>
   </div>
 
-  <div class="card" style="margin-top: 16px;">
-    <div class="card__body" style="overflow-x: auto;">
+  <div class="card" style="margin-top:12px;">
+    <div class="card__body table-responsive">
       <table class="table">
         <thead>
           <tr>
-            <th style="white-space: nowrap;">Дата/время</th>
+            <th>Дата/время</th>
             <th>Пользователь</th>
             <th>Действие</th>
             <th>IP</th>
@@ -52,25 +51,26 @@
         </thead>
         <tbody>
           {% for l in logs %}
-            <tr>
-              <td style="white-space: nowrap;">{{ l.created_at|date:"d.m.Y H:i:s" }}</td>
-              <td>
-                {% if l.user %}
-                  {{ l.user.full_name|default:l.user.username }}
-                  <div class="muted">{{ l.user.username }}</div>
-                {% else %}
-                  —
-                {% endif %}
-              </td>
-              <td><span class="badge">{{ l.action }}</span></td>
-              <td style="white-space: nowrap;">{{ l.ip_address|default:"—" }}</td>
-              <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis;">{{ l.method }} {{ l.path }}</td>
-              <td style="max-width: 420px; overflow: hidden; text-overflow: ellipsis;">
-                <code style="font-size: 12px;">{{ l.details }}</code>
-              </td>
-            </tr>
+          <tr>
+            <td style="white-space:nowrap;">{{ l.created_at|date:"d.m.Y H:i:s" }}</td>
+            <td>
+              {% if l.user %}
+                <strong>{{ l.user.full_name|default:l.user.username }}</strong>
+                <div class="muted">{{ l.user.username }}</div>
+              {% else %}—{% endif %}
+            </td>
+            <td><span class="badge">{{ l.action }}</span></td>
+            <td style="white-space:nowrap;">{{ l.ip_address|default:"—" }}</td>
+            <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis;">{{ l.method }} {{ l.path }}</td>
+            <td style="max-width:420px;">
+              <details>
+                <summary class="badge" style="cursor:pointer;">Показать JSON</summary>
+                <pre style="margin:8px 0 0; white-space:pre-wrap; word-break:break-word; font-size:12px;">{{ l.details }}</pre>
+              </details>
+            </td>
+          </tr>
           {% empty %}
-            <tr><td colspan="6" class="muted">Нет записей.</td></tr>
+          <tr><td colspan="6" class="muted">Нет записей.</td></tr>
           {% endfor %}
         </tbody>
       </table>

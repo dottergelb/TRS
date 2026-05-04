@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% load user_icons %}
+
+{% block title %}Кабинет поддержки{% endblock %}
+{% block section_title %}Кабинет поддержки{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Служба поддержки: {{ user.full_name|default:user.username }}</h1>
+      <p class="page-subtitle">Рабочее место поддержки по тикетам и обращениям.</p>
+    </div>
+  </div>
+
+  <section class="kpi-grid" aria-label="Показатели поддержки">
+    <article class="kpi-card">
+      <p class="kpi-label">Открытые тикеты</p>
+      <p class="kpi-value">{{ support_open_tickets }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Закрытые тикеты</p>
+      <p class="kpi-value">{{ support_closed_tickets }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Ваши сообщения в тикетах</p>
+      <p class="kpi-value">{{ support_messages_total }}</p>
+    </article>
+    <article class="kpi-card">
+      <p class="kpi-label">Непрочитанные сообщения</p>
+      <p class="kpi-value">{{ chat_unread }}</p>
+    </article>
+  </section>
+
+  <section class="card" style="margin-top:14px;">
+    <div class="card__header">
+      <div class="card__headtext">
+        <h2 class="card__title">Быстрые действия</h2>
+        <p class="card__subtitle">Навигация по рабочим разделам службы поддержки.</p>
+      </div>
+    </div>
+    <div class="card__body">
+      <div class="quick-actions">
+        <a class="quick-action" href="{% url 'communications:tickets' %}">Тикеты</a>
+        <a class="quick-action" href="{% url 'communications:support_stats' %}">Статистика</a>
+        <a class="quick-action" href="{% url 'communications:chats' %}">Сообщения</a>
+      </div>
+    </div>
+  </section>
+{% endblock %}

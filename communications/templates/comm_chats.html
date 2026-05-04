@@ -2,6 +2,7 @@
 {% load user_icons %}
 
 {% block title %}Сообщения{% endblock %}
+{% block section_title %}Сообщения{% endblock %}
 {% block container_class %}container--wide{% endblock %}
 
 {% block content %}
@@ -47,6 +48,9 @@
 
           <hr>
           <h4>Новый диалог</h4>
+          <div class="field">
+            <input id="newDialogSearch" type="text" placeholder="Поиск пользователя...">
+          </div>
           <div id="usersList" class="chat-list chat-list--compact">
             {% for u in users %}
               <a class="btn btn--ghost chat-dialog-btn" href="{% url 'communications:chats_with' u.id %}">
@@ -184,6 +188,7 @@
 
       const dialogsList = document.getElementById('dialogsList');
       const usersList = document.getElementById('usersList');
+      const newDialogSearch = document.getElementById('newDialogSearch');
       const threadBox = document.getElementById('threadBox');
       const threadTitle = document.getElementById('threadTitle');
       const chatForm = document.getElementById('chatForm');
@@ -304,7 +309,19 @@
           const a = el('a', 'btn btn--ghost chat-dialog-btn');
           a.href = chatUrl(user.id);
           a.appendChild(el('span', 'chat-dialog-btn__name', (user.icon || '👤') + ' ' + (user.display_name || 'Пользователь')));
+          a.dataset.searchName = (user.display_name || '').toLowerCase();
           usersList.appendChild(a);
+        });
+        filterUsersBySearch();
+      }
+
+      function filterUsersBySearch() {
+        if (!usersList || !newDialogSearch) return;
+        const q = (newDialogSearch.value || '').trim().toLowerCase();
+        const links = usersList.querySelectorAll('a.chat-dialog-btn');
+        links.forEach((link) => {
+          const text = (link.dataset.searchName || link.textContent || '').toLowerCase();
+          link.style.display = (!q || text.includes(q)) ? '' : 'none';
         });
       }
 
@@ -510,6 +527,9 @@
       }
 
       initComposerControls();
+      if (newDialogSearch) {
+        newDialogSearch.addEventListener('input', filterUsersBySearch);
+      }
       refreshState();
       window.setInterval(refreshState, 4000);
     })();

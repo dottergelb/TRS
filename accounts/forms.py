@@ -4,6 +4,7 @@ from django import forms
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
 from .models import CustomUser
+from .models import School
 
 
 class RegisterForm(UserCreationForm):
@@ -20,6 +21,97 @@ class RegisterForm(UserCreationForm):
 
 class LoginForm(AuthenticationForm):
     pass
+
+
+class SchoolRegistrationForm(forms.ModelForm):
+    class Meta:
+        model = School
+        fields = [
+            "name",
+            "city",
+            "street",
+            "house",
+            "contact_phone",
+            "contact_email",
+            "contact_person",
+            "comment",
+        ]
+        labels = {
+            "name": "Название школы",
+            "city": "Город",
+            "street": "Улица",
+            "house": "Дом",
+            "contact_phone": "Телефон для связи",
+            "contact_email": "Email для связи",
+            "contact_person": "Контактное лицо",
+            "comment": "Комментарий",
+        }
+
+
+class SchoolReviewForm(forms.ModelForm):
+    class Meta:
+        model = School
+        fields = [
+            "name",
+            "city",
+            "street",
+            "house",
+            "contact_phone",
+            "contact_email",
+            "contact_person",
+            "comment",
+        ]
+
+
+class ProjectUserCreateForm(forms.ModelForm):
+    ROLE_PROJECT_ADMIN = "project_admin"
+    ROLE_SUPPORT_SYSTEM = "support_system"
+    ROLE_NOTIFY_SYSTEM = "notify_system"
+
+    role = forms.ChoiceField(
+        label="Роль проекта",
+        choices=(
+            (ROLE_PROJECT_ADMIN, "Администратор проекта"),
+            (ROLE_SUPPORT_SYSTEM, "Система поддержки"),
+            (ROLE_NOTIFY_SYSTEM, "Система оповещения"),
+        ),
+        required=True,
+    )
+    password = forms.CharField(label="Пароль", widget=forms.PasswordInput, required=False)
+
+    class Meta:
+        model = CustomUser
+        fields = ["username", "full_name", "role", "password"]
+        labels = {
+            "username": "Логин",
+            "full_name": "ФИО",
+        }
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        role = self.cleaned_data["role"]
+        user.school = None
+        user.is_guest = False
+        user.is_teacher = False
+        user.is_admin = False
+        user.can_calendar = False
+        user.can_teachers = False
+        user.can_editor = False
+        user.can_upload = False
+        user.can_logs = False
+        user.can_calls = False
+        user.can_users = False
+        user.is_project_admin = role == self.ROLE_PROJECT_ADMIN
+        user.is_support_system = role == self.ROLE_SUPPORT_SYSTEM
+        user.is_system_account = role == self.ROLE_NOTIFY_SYSTEM
+        pwd = (self.cleaned_data.get("password") or "").strip()
+        if pwd:
+            user.set_password(pwd)
+        else:
+            user.set_unusable_password()
+        if commit:
+            user.save()
+        return user
 
 
 class UserUpdateForm(forms.ModelForm):

@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .api_errors import api_json_errors
 from .audit import log_activity
+from accounts.school_scope import scope_queryset_for_school
 from .models import Lesson, SpecialReplacement, Teacher
 from .services.permissions_parsing import (
     _active_lessons,
@@ -48,7 +49,7 @@ def teacher_details(request, teacher_id):
         return HttpResponse("Forbidden", status=403)
 
     try:
-        teacher = Teacher.objects.get(id=teacher_id)
+        teacher = scope_queryset_for_school(Teacher.objects).get(id=teacher_id)
     except Teacher.DoesNotExist:
         return JsonResponse({"error": "Teacher not found"}, status=404)
     return JsonResponse({"name": teacher.full_name})
@@ -81,7 +82,7 @@ def check_replacements_for_date(request):
         )
         return JsonResponse({"exists": bool(exists_regular or exists_special)})
 
-    exists = _teacher_replacements().filter(date=date_str).exists() or SpecialReplacement.objects.filter(date=date_str).exists()
+    exists = _teacher_replacements().filter(date=date_str).exists() or scope_queryset_for_school(SpecialReplacement.objects).filter(date=date_str).exists()
     return JsonResponse({"exists": exists})
 
 
@@ -128,7 +129,7 @@ def delete_replacements_for_date(request):
         return JsonResponse({"status": "success", "deleted_count": deleted_count})
 
     deleted, _ = _teacher_replacements().filter(date=date_str).delete()
-    deleted_special, _ = SpecialReplacement.objects.filter(date=date_str).delete()
+    deleted_special, _ = scope_queryset_for_school(SpecialReplacement.objects).filter(date=date_str).delete()
     return JsonResponse({"status": "success", "deleted_count": deleted + deleted_special})
 
 
@@ -216,10 +217,10 @@ def update_lesson_teacher(request, lesson_id):
             }
         )
 
-    lesson = Lesson.objects.filter(id=lesson_id).first()
+    lesson = scope_queryset_for_school(Lesson.objects).filter(id=lesson_id).first()
     if lesson is None:
         return JsonResponse({"error": "Урок не найден"}, status=404)
-    teacher = Teacher.objects.filter(id=teacher_id).first()
+    teacher = scope_queryset_for_school(Teacher.objects).filter(id=teacher_id).first()
     if teacher is None:
         return JsonResponse({"error": "Учитель не найден"}, status=404)
 
@@ -232,7 +233,7 @@ def update_lesson_teacher(request, lesson_id):
             )
             mode = "class_same_subject_same_teacher"
         else:
-            target_qs = Lesson.objects.filter(id=lesson.id)
+            target_qs = scope_queryset_for_school(Lesson.objects).filter(id=lesson.id)
             mode = "single_lesson"
 
         affected_count = target_qs.count()
@@ -340,13 +341,13 @@ def reassign_teacher_lessons(request):
             }
         )
 
-    from_teacher = Teacher.objects.filter(id=from_teacher_id).first()
-    to_teacher = Teacher.objects.filter(id=to_teacher_id).first()
+    from_teacher = scope_queryset_for_school(Teacher.objects).filter(id=from_teacher_id).first()
+    to_teacher = scope_queryset_for_school(Teacher.objects).filter(id=to_teacher_id).first()
     if not from_teacher or not to_teacher:
         return JsonResponse({"error": "Учитель не найден"}, status=404)
 
     with transaction.atomic():
-        lessons_qs = Lesson.objects.filter(teacher_id=from_teacher_id)
+        lessons_qs = scope_queryset_for_school(Lesson.objects).filter(teacher_id=from_teacher_id)
         if active_only:
             lessons_qs = lessons_qs.filter(is_active=True)
         affected_count = lessons_qs.count()

@@ -1,131 +1,110 @@
-# TRS (Teacher Replacement System)
+# DIP (TRS - Teacher Replacement System)
 
-Django-проект для управления заменами учителей: календарь замен, отдельные замены, кабинеты, статистика, уведомления сотрудникам, чаты/тикеты, импорт/экспорт DOCX.
+Система управления заменами преподавателей: календарь замен, коммуникации, отчеты и админ-потоки.
 
-## Технологии
+## Стек технологий
 
-- Python 3.12, Django
+- Python 3.12
+- Django
 - PostgreSQL
-- Redis + Celery (worker/beat)
+- Redis + Celery
 - Docker / Docker Compose
-- Nginx (prod)
+- Nginx (production)
 
-## Основные возможности
+## Структура проекта
 
-- Календарь замен с сохранением на дату
-- Импорт DOCX в фоне через Celery со статусом задачи
-- Экспорт отчетов DOCX
-- Статистика по дню/периоду/месяцу
-- Оповещения сотрудникам
-- Управление учителями/специализациями
-- Журнал действий (audit log)
+- `teacher_replacement/` - конфигурация Django, URL, celery, health-check
+- `replacements/` - бизнес-логика замен, расписания, статистика, шаблоны
+- `communications/` - чаты, тикеты, уведомления
+- `accounts/` - пользователи, роли, доступы
+- `deploy/` - инфраструктурные конфиги
+- `scripts/` - утилиты обслуживания
+- `docs/` - документация
 
-## Локальный запуск (без Docker)
+## Установка зависимостей
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-python manage.py migrate
-python manage.py runserver 127.0.0.1:8000
 ```
 
-## Локальный запуск (Docker, dev)
+## Настройка `.env`
+
+1. Создать файл из примера:
+```powershell
+Copy-Item .env.example .env
+```
+2. Проверить обязательные переменные:
+- `DJANGO_SECRET_KEY`
+- `DJANGO_DEBUG`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+
+## Запуск проекта
+
+Локально:
 
 ```powershell
-copy .env.example .env
+python manage.py migrate
+python manage.py runserver 127.0.0.1:8001
+```
+
+Через Docker:
+
+```powershell
 docker compose up -d --build
 ```
 
-Открыть:
+## Работа с PostgreSQL
 
-- http://127.0.0.1:8001
-
-Dev compose поднимает:
-
-- `web`
-- `db`
-- `redis`
-- `celery_worker`
-
-## Production stack
-
-Используется `docker-compose.prod.yml`:
-
-- `web` (gunicorn)
-- `nginx`
-- `db` (PostgreSQL)
-- `redis`
-- `celery_worker`
-- `celery_beat`
-
-Запуск:
-
+- Основные параметры берутся из `.env`.
+- Бэкап (созданный дамп хранится в `backups/`):
+  - `dip_backup_YYYY-MM-DD_HH-MM.sql`
+- Восстановление:
 ```powershell
-copy .env.prod.example .env.prod
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+docker exec -i dip-db-1 psql -U postgres -d teacher_replacement < .\backups\<dump_file>.sql
 ```
-
-URL по умолчанию:
-
-- http://127.0.0.1:8080
-
-## Переменные окружения (ключевые)
-
-- `DJANGO_ENV` (`dev` / `prod`)
-- `DJANGO_DB_ENGINE=postgres`
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`
-- `DJANGO_ALLOWED_HOSTS`
-- `DJANGO_CSRF_TRUSTED_ORIGINS`
-- `CELERY_BROKER_URL` (обычно `redis://redis:6379/0`)
-- `CELERY_RESULT_BACKEND` (обычно `redis://redis:6379/1`)
-- `MAX_DOCX_UPLOAD_SIZE`
 
 ## Миграции
 
 ```powershell
+python manage.py makemigrations
 python manage.py migrate
 ```
 
-Для Docker:
+Docker:
 
 ```powershell
 docker compose exec web python manage.py migrate
 ```
 
-## Health-check endpoints
+## Команды разработки
 
-- `/health/live/`
-- `/health/ready/`
+- Тесты: `python manage.py test`
+- Проверка compose-конфига: `docker compose config`
 
-## Бэкапы PostgreSQL
+## Что не должно попадать в репозиторий
 
-```powershell
-sh ./scripts/backup_postgres.sh
-sh ./scripts/restore_postgres.sh ./backups/<backup_file>.sql.gz
-```
+- `.env`, `*.env`
+- `venv/`, `env/`, `.venv*/`
+- `__pycache__/`, `*.pyc`
+- `.idea/`, `.vscode/`
+- `node_modules/`
+- `logs/`, `*.log`
+- `backups/`, `*.sql`
+- `*.sqlite3`
+- `media/` (локальные пользовательские файлы)
+- `staticfiles/` (локальный build/output)
 
-## Тесты
+## Деплой / дальнейшая настройка
 
-```powershell
-python manage.py test
-```
-
-## Примечания по доступу извне
-
-Если открываете проект через туннель (например ngrok), добавьте домен туннеля в:
-
-- `DJANGO_ALLOWED_HOSTS`
-- `DJANGO_CSRF_TRUSTED_ORIGINS`
-
-И перезапустите `web`.
-
-## Структура (кратко)
-
-- `teacher_replacement/` — settings, urls, celery, health
-- `replacements/` — ядро логики замен, календарь, статистика, DOCX
-- `communications/` — уведомления, чаты, тикеты
-- `accounts/` — пользователи и доступы
-- `deploy/nginx/` — nginx-конфиг для prod
-- `scripts/` — утилиты деплоя/бэкапов/валидации
+- Production-конфигурация: `docker-compose.prod.yml`.
+- Перед деплоем заполнить `.env.prod` по шаблону `.env.prod.example`.
+- Проверить:
+  - безопасный `DJANGO_SECRET_KEY`,
+  - корректные `DJANGO_ALLOWED_HOSTS`,
+  - корректные `DJANGO_CSRF_TRUSTED_ORIGINS`.

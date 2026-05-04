@@ -1,33 +1,40 @@
 {% extends "base.html" %}
 
 {% block title %}Системные уведомления{% endblock %}
+{% block section_title %}Уведомления{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
       <h1 class="page-title">Системные уведомления</h1>
-      <p class="page-subtitle">Выберите действие: «Ознакомлен» или «Есть вопросы»</p>
+      <p class="page-subtitle">Отметьте уведомление как прочитанное или создайте тикет с вопросом.</p>
     </div>
   </div>
 
   <div class="stack">
     {% for n in notifications %}
-      <div class="card" style="
-        {% if n.status == 'created' %}background:#f1f5f9;{% elif n.status == 'acknowledged' %}background:#dcfce7;{% else %}background:#fff;{% endif %}
-      ">
-        <div class="card__body">
-          <div class="row" style="justify-content:space-between;">
+      <article class="card notif-card notif-card--{{ n.status }}">
+        <div class="card__body stack">
+          <div class="row row--between">
             <div>
-              <h3>{{ n.title|default:"Уведомление" }}</h3>
-              <p class="muted">{{ n.created_at|date:"d.m.Y H:i" }} · статус: {{ n.status }}</p>
+              <h3 class="card__title">{{ n.title|default:"Уведомление" }}</h3>
+              <p class="muted">{{ n.created_at|date:"d.m.Y H:i" }} · Статус: {{ n.status }}</p>
             </div>
           </div>
-          <pre style="white-space:pre-wrap;">{{ n.body }}</pre>
+
+          <pre class="notif-body">{{ n.body }}</pre>
 
           {% if n.items.all %}
             <div class="table-responsive">
               <table class="table">
-                <thead><tr><th>Урок</th><th>Класс</th><th>Время</th><th>Кого заменяете</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Урок</th>
+                    <th>Класс</th>
+                    <th>Время</th>
+                    <th>Кого замещаете</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {% for i in n.items.all %}
                     <tr>
@@ -43,27 +50,29 @@
           {% endif %}
 
           {% if n.status == 'created' or n.status == 'read' %}
-            <div class="row" style="margin-top:10px;">
+            <div class="row notif-actions">
               <form method="post" action="{% url 'communications:notification_ack' n.id %}">
                 {% csrf_token %}
                 <button class="btn btn--primary" type="submit">Ознакомлен</button>
               </form>
-              <details>
+
+              <details class="notif-details">
                 <summary class="btn btn--secondary">Есть вопросы</summary>
-                <form method="post" action="{% url 'communications:notification_question' n.id %}" style="margin-top:8px;">
+                <form method="post" action="{% url 'communications:notification_question' n.id %}" class="stack notif-question-form">
                   {% csrf_token %}
                   {{ question_form.subject }}
                   {{ question_form.text }}
-                  <button class="btn btn--primary" type="submit" style="margin-top:8px;">Создать тикет</button>
+                  <button class="btn btn--primary" type="submit">Создать тикет</button>
                 </form>
               </details>
             </div>
           {% endif %}
         </div>
-      </div>
+      </article>
     {% empty %}
-      <div class="card"><div class="card__body">Уведомлений пока нет.</div></div>
+      <div class="card">
+        <div class="card__body">Уведомлений пока нет.</div>
+      </div>
     {% endfor %}
   </div>
 {% endblock %}
-

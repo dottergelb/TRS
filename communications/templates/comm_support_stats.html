@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}Статистика поддержки{% endblock %}
+{% block section_title %}Статистика{% endblock %}
+{% block container_class %}container--wide{% endblock %}
+
+{% block extra_head %}
+<style>
+  .stats-shell { display:grid; gap:14px; }
+  .stats-toolbar { position: sticky; top: calc(var(--top-nav-height) + 8px); z-index: 800; }
+  .stats-toolbar__body { display:flex; gap:10px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; }
+  .stats-toolbar__left, .stats-toolbar__right { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  .stats-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .kpi { border:1px solid var(--border); border-radius:14px; background:#fff; padding:14px; }
+  .kpi__label { margin:0 0 8px; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#607089; }
+  .kpi__value { margin:0; font-size:30px; line-height:1; font-family:"Space Grotesk","Manrope",sans-serif; letter-spacing:-.03em; }
+  .stats-main { display:grid; grid-template-columns:1.7fr 1fr; gap:12px; }
+  .daily-chart { display:flex; align-items:flex-end; gap:8px; min-height:210px; overflow-x:auto; padding:8px 4px 0; }
+  .daily-col { min-width:20px; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .daily-col__bar { width:100%; min-height:2px; border-radius:8px 8px 2px 2px; background:linear-gradient(180deg,#0f5cd6,#0f766e); }
+  .daily-col__lbl { font-size:11px; color:var(--muted); writing-mode:vertical-rl; transform:rotate(180deg); }
+  .donut-wrap { display:grid; place-items:center; min-height:200px; }
+  .donut { width:170px; height:170px; border-radius:50%; position:relative; background:conic-gradient(#0f5cd6 0deg, #0f5cd6 calc({{ teacher_pct }} * 3.6deg), #0f766e calc({{ teacher_pct }} * 3.6deg), #0f766e 360deg); }
+  .donut::after { content:""; position:absolute; inset:22px; border-radius:50%; background:#fff; border:1px solid var(--border); }
+  .donut__center { position:absolute; inset:0; display:grid; place-items:center; z-index:1; text-align:center; }
+  .donut__value { margin:0; font-family:"Space Grotesk","Manrope",sans-serif; font-size:28px; line-height:1; }
+  .mini-metrics { display:grid; gap:8px; }
+  .mini-metric { border:1px solid var(--border); border-radius:12px; padding:9px 10px; background:#fff; display:grid; gap:3px; }
+  .mini-metric__label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:#607089; }
+  .mini-metric__value { font-size:20px; font-family:"Space Grotesk","Manrope",sans-serif; letter-spacing:-.02em; }
+  @media (max-width:1100px){ .stats-kpis {grid-template-columns:repeat(2,minmax(0,1fr));} .stats-main{grid-template-columns:1fr;} }
+  @media (max-width:760px){ .stats-kpis {grid-template-columns:1fr;} }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="stats-shell">
+  <section class="card stats-toolbar">
+    <div class="card__body stats-toolbar__body">
+      <div class="stats-toolbar__left">
+        <form method="get" class="row row--end" style="gap:8px;flex-wrap:wrap;">
+          <label>
+            <span class="field-label">Режим</span>
+            <select name="mode" onchange="this.form.submit()">
+              <option value="day" {% if mode == 'day' %}selected{% endif %}>День</option>
+              <option value="month" {% if mode == 'month' %}selected{% endif %}>Месяц</option>
+              <option value="period" {% if mode == 'period' %}selected{% endif %}>Период</option>
+            </select>
+          </label>
+          <label><span class="field-label">Дата</span><input type="date" name="date" value="{{ date }}"></label>
+          <label><span class="field-label">Месяц</span><input type="month" name="month" value="{{ month }}"></label>
+          <label><span class="field-label">С</span><input type="date" name="date_from" value="{{ date_from }}"></label>
+          <label><span class="field-label">По</span><input type="date" name="date_to" value="{{ date_to }}"></label>
+          <button type="submit" class="btn btn--primary btn--sm">Применить</button>
+        </form>
+      </div>
+      <div class="stats-toolbar__right">
+        <span class="badge">{{ period_label }}</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats-kpis">
+    <article class="kpi"><p class="kpi__label">Сообщений в тикетах</p><p class="kpi__value">{{ messages_count }}</p></article>
+    <article class="kpi"><p class="kpi__label">Закрытых тикетов (период)</p><p class="kpi__value">{{ closed_count }}</p></article>
+    <article class="kpi"><p class="kpi__label">Открытых тикетов сейчас</p><p class="kpi__value">{{ open_count }}</p></article>
+    <article class="kpi"><p class="kpi__label">Тикетов от учителей</p><p class="kpi__value">{{ teacher_tickets_count }}</p></article>
+  </section>
+
+  <section class="stats-main">
+    <article class="card">
+      <div class="card__header"><h3 class="card__title">Динамика сообщений</h3></div>
+      <div class="card__body">
+        <div class="daily-chart">
+          {% for p in daily_points %}
+            <div class="daily-col" title="{{ p.label }}: {{ p.value }}">
+              <div class="daily-col__bar" style="height: {{ p.height }}px;"></div>
+              <div class="daily-col__lbl">{{ p.label }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </article>
+    <article class="stats-right">
+      <section class="card">
+        <div class="card__header"><h3 class="card__title">Источники тикетов</h3></div>
+        <div class="card__body">
+          <div class="donut-wrap">
+            <div class="donut">
+              <div class="donut__center">
+                <p class="donut__value">{{ teacher_pct }}%</p>
+                <small>Учителя</small>
+              </div>
+            </div>
+          </div>
+          <div class="mini-metrics">
+            <div class="mini-metric"><div class="mini-metric__label">От учителей</div><div class="mini-metric__value">{{ teacher_tickets_count }}</div></div>
+            <div class="mini-metric"><div class="mini-metric__label">В поддержку</div><div class="mini-metric__value">{{ support_tickets_count }}</div></div>
+            <div class="mini-metric"><div class="mini-metric__label">Доля поддержки</div><div class="mini-metric__value">{{ support_pct }}%</div></div>
+          </div>
+        </div>
+      </section>
+    </article>
+  </section>
+</section>
+{% endblock %}

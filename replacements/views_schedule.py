@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
 
+from accounts.school_scope import scope_queryset_for_school
 from .models import Lesson
 from .services.permissions_parsing import (
     _active_lessons,
@@ -59,7 +60,7 @@ def get_lessons_by_id(request, lesson_id):
     if not _can_calendar_read(request.user):
         return HttpResponse("Forbidden", status=403)
     try:
-        lesson = Lesson.objects.select_related("subject", "teacher").get(id=lesson_id)
+        lesson = scope_queryset_for_school(Lesson.objects).select_related("subject", "teacher").get(id=lesson_id)
     except Lesson.DoesNotExist:
         return JsonResponse({"error": f"Урок с ID {lesson_id} не найден"}, status=404)
 

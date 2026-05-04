@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Проверка заявки школы{% endblock %}
+{% block section_title %}Заявка школы{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Проверка заявки</h1>
+      <p class="page-subtitle">{{ school_obj.name }} · статус: {{ school_obj.status }}</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="stack">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <div class="row" style="gap:8px;">
+          <button type="submit" name="next_action" value="save" class="btn btn--secondary">Сохранить</button>
+          <button type="submit" name="next_action" value="approve" class="btn btn--primary">Одобрить</button>
+          <button type="submit" name="next_action" value="reject" class="btn btn--ghost">Отклонить</button>
+          <a class="btn btn--ghost" href="{% url 'accounts:project_hub' %}">Назад</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

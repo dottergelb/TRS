@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from accounts.school_scope import get_current_school_id
 from replacements.models import Replacement, SpecialReplacement
 
 from .models import (
@@ -22,12 +23,19 @@ User = get_user_model()
 
 
 def is_admin_user(user) -> bool:
-    return bool(getattr(user, "is_authenticated", False) and (user.is_superuser or getattr(user, "is_admin", False)))
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (
+            user.is_superuser
+            or getattr(user, "is_project_admin", False)
+            or getattr(user, "is_admin", False)
+        )
+    )
 
 
 def ensure_system_user():
     username = "system_notify"
-    user = User.objects.filter(is_system_account=True).first()
+    user = User.objects.filter(is_system_account=True, school__isnull=True).first()
     if user:
         return user
 
@@ -38,9 +46,12 @@ def ensure_system_user():
             "is_active": True,
             "is_staff": False,
             "is_system_account": True,
+            "is_support_system": False,
+            "is_project_admin": False,
             "is_admin": False,
             "is_teacher": False,
             "is_guest": False,
+            "school": None,
             "can_calendar": False,
             "can_teachers": False,
             "can_editor": False,
@@ -53,6 +64,9 @@ def ensure_system_user():
     changed = False
     if not user.is_system_account:
         user.is_system_account = True
+        changed = True
+    if user.school_id is not None:
+        user.school = None
         changed = True
     if (user.full_name or "").strip() != "Система оповещения":
         user.full_name = "Система оповещения"
@@ -73,6 +87,8 @@ def _lesson_time_and_subject(replacement: Replacement):
 def _replacement_rows_for_date(target_date: date):
     rows = []
 
+    school_id = get_current_school_id()
+
     repl_qs = (
         Replacement.objects.filter(date=target_date)
         .exclude(replacement_teacher_id=None)
@@ -81,6 +97,8 @@ def _replacement_rows_for_date(target_date: date):
         .select_related("lesson__subject", "original_teacher", "replacement_teacher")
         .order_by("lesson__lesson_number", "lesson__class_group", "id")
     )
+    if school_id and school_id > 0:
+        repl_qs = repl_qs.filter(school_id=school_id)
     for r in repl_qs:
         st, en, subj = _lesson_time_and_subject(r)
         rows.append(
@@ -105,6 +123,8 @@ def _replacement_rows_for_date(target_date: date):
         .select_related("original_teacher", "replacement_teacher")
         .order_by("lesson_number", "class_group", "id")
     )
+    if school_id and school_id > 0:
+        special_qs = special_qs.filter(school_id=school_id)
     for s in special_qs:
         rows.append(
             {
@@ -133,7 +153,13 @@ def build_notification_preview(target_date: date):
 
     preview = []
     for (teacher_id, teacher_name), items in sorted(grouped.items(), key=lambda x: (x[0][1].casefold(), x[0][0] or 0)):
-        user = User.objects.filter(full_name__iexact=(teacher_name or "").strip(), is_active=True).first()
+        user_qs = User.objects.filter(full_name__iexact=(teacher_name or "").strip(), is_active=True)
+        school_id = get_current_school_id()
+        if school_id and school_id > 0:
+            user_qs = user_qs.filter(school_id=school_id)
+        else:
+            user_qs = user_qs.filter(school__isnull=False)
+        user = user_qs.first()
         preview.append(
             {
                 "teacher_id": teacher_id,
@@ -177,6 +203,15 @@ def send_notifications_for_date(*, target_date: date, admin_user):
     created_notifications = 0
     skipped_without_user = 0
     recipients = 0
+    school_id = get_current_school_id()
+    if school_id is not None and school_id <= 0:
+        return {
+            "created_notifications": 0,
+            "skipped_without_user": 0,
+            "recipients": 0,
+            "preview_total": 0,
+        }
+
     for group in preview:
         recipient_id = group.get("user_id")
         if not recipient_id:
@@ -188,6 +223,7 @@ def send_notifications_for_date(*, target_date: date, admin_user):
         body = _render_notification_body(target_date, group.get("teacher_name") or "", items)
 
         notification = SystemNotification.objects.create(
+            school_id=school_id if school_id and school_id > 0 else recipient.school_id,
             recipient=recipient,
             sender_system_user=system_user,
             created_by_admin=admin_user,
@@ -205,6 +241,7 @@ def send_notifications_for_date(*, target_date: date, admin_user):
         NotificationReplacementItem.objects.bulk_create(
             [
                 NotificationReplacementItem(
+                    school_id=notification.school_id,
                     notification=notification,
                     replacement_id=row.get("replacement_id"),
                     replacement_date=row.get("date"),
@@ -221,6 +258,7 @@ def send_notifications_for_date(*, target_date: date, admin_user):
         )
 
         ChatMessage.objects.create(
+            school_id=notification.school_id,
             sender=system_user,
             recipient=recipient,
             text=body,

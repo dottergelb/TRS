@@ -7,6 +7,7 @@ from datetime import datetime
 from celery import shared_task
 
 from .models import DocxImportTask, ActivityLog
+from .request_context import current_school_id_var
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,16 @@ def import_replacements_docx_task(
     try:
         file_bytes = base64.b64decode(file_bytes_b64.encode("ascii"))
         target_date = dt.strptime(date_str, "%Y-%m-%d").date()
-        result = replacements_views._run_docx_import_core(
-            file_bytes=file_bytes,
-            target_date=target_date,
-            replace_all=replace_all,
-        )
+        scope_school_id = job.school_id or (job.created_by.school_id if job.created_by_id and job.created_by else None)
+        school_token = current_school_id_var.set(scope_school_id if scope_school_id else None)
+        try:
+            result = replacements_views._run_docx_import_core(
+                file_bytes=file_bytes,
+                target_date=target_date,
+                replace_all=replace_all,
+            )
+        finally:
+            current_school_id_var.reset(school_token)
 
         job.status = DocxImportTask.STATUS_SUCCESS
         job.parsed_rows = int(result.get("parsed_rows") or 0)

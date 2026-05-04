@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи проекта{% endblock %}
+{% block section_title %}Пользователи проекта{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Пользователи проекта</h1>
+      <p class="page-subtitle">Аккаунты верхнего уровня, не привязанные к школе.</p>
+    </div>
+    <div class="row">
+      <a class="btn btn--secondary" href="{% url 'accounts:project_hub' %}">К школам</a>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card__header"><h2 class="card__title">Создать пользователя проекта</h2></div>
+    <div class="card__body">
+      <form method="post" class="stack">
+        {% csrf_token %}
+        {{ create_form.as_p }}
+        <button class="btn btn--primary" type="submit">Создать</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body table-responsive">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>ФИО</th>
+            <th>Логин</th>
+            <th>Роль</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+            <tr>
+              <td>{{ u.full_name|default:"—" }}</td>
+              <td>{{ u.username }}</td>
+              <td>
+                {% if u.is_superuser %}
+                  <span class="badge">Суперпользователь</span>
+                {% elif u.is_project_admin %}
+                  <span class="badge">Администратор проекта</span>
+                {% elif u.is_support_system %}
+                  <span class="badge">Система поддержки</span>
+                {% elif u.is_system_account %}
+                  <span class="badge">Система оповещения</span>
+                {% else %}
+                  <span class="badge">Пользователь</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if not u.is_superuser %}
+                  <form method="post" action="{% url 'accounts:project_user_delete' u.id %}">
+                    {% csrf_token %}
+                    <button class="btn btn--ghost btn--sm" type="submit" onclick="return confirm('Удалить пользователя проекта?');">Удалить</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4">Нет пользователей проекта</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

@@ -1,125 +1,138 @@
 {% load static %}
-<!doctype html>
 {% load user_icons %}
+<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}ИС замещений{% endblock %}</title>
 
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=2026-04-28-3">
-  <link rel="icon" type="image/png" href="{% static 'img/icona.png' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=2026-05-03-1">
+  <link rel="stylesheet" href="{% static 'css/eduflow.css' %}?v=2026-05-03-1">
+  <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/favicon-16.png' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32.png' %}">
   <link rel="icon" type="image/png" sizes="64x64" href="{% static 'img/favicon-64.png' %}">
-  <link rel="icon" type="image/png" sizes="128x128" href="{% static 'img/favicon-128.png' %}">
-  <link rel="icon" type="image/png" sizes="256x256" href="{% static 'img/favicon-256.png' %}">
-  <link rel="icon" type="image/png" sizes="512x512" href="{% static 'img/favicon-512.png' %}">
-  <link rel="icon" type="image/svg+xml" href="{% static 'img/icona.svg' %}">
   <link rel="apple-touch-icon" sizes="180x180" href="{% static 'img/apple-touch-icon.png' %}">
   {% block extra_head %}{% endblock %}
 </head>
-<body class="{% if user.is_authenticated %}has-top-nav {% endif %}{% block body_class %}{% endblock %}">
-
-  {% block header %}
-    {% if user.is_authenticated %}
-      <header class="top-nav" role="banner">
-        <div class="nav-inner">
-          <div class="nav-brand-wrap">
-            <a class="nav-brand" href="/replacements/">
-              <span class="nav-logo">🏫</span>
-              <span class="nav-title">ИС замещений</span>
-            </a>
-            <button
-              type="button"
-              id="sidebarToggle"
-              class="icon-btn nav-sidebar-toggle"
-              aria-label="Открыть меню"
-              aria-expanded="false"
-              aria-controls="appSidebar"
-            >▸</button>
-          </div>
-
-          <div class="nav-actions">
-            {% if not user.is_guest %}
-              <a id="navMsgLink" class="nav-icon-link" href="{% url 'communications:chats' %}" title="Сообщения" aria-label="Сообщения">
-                💬
-                <span id="navUnreadMessagesCount" class="alert-badge" hidden>0</span>
-              </a>
-            {% endif %}
-            {% if user.is_superuser or user.is_admin %}
-              <a id="navNotifLink" class="nav-icon-link" href="{% url 'communications:notifications' %}" title="Уведомления" aria-label="Уведомления">
-                🔔
-                <span id="navUnreadNotificationsCount" class="alert-badge" hidden>0</span>
-              </a>
-            {% endif %}
-            <div class="nav-user" title="Текущий пользователь">
-              <span class="nav-user__icon" data-fixed="1">{{ user|user_icon }}</span>
-              <span class="nav-user__name">{{ user.full_name|default:user.username }}</span>
-            </div>
-            <form method="post" action="{% url 'accounts:logout' %}" style="display:inline;">
-              {% csrf_token %}
-              <button class="btn btn--ghost btn--sm" type="submit">Выйти</button>
-            </form>
-          </div>
+<body class="{% if user.is_authenticated %}has-top-nav has-shell {% endif %}{% block body_class %}{% endblock %}">
+  {% if user.is_authenticated %}
+    <header class="top-nav" role="banner">
+      <div class="nav-inner">
+        <div class="nav-brand-wrap">
+          <a class="nav-brand" href="{% url 'replacements:main-menu' %}">
+            <span class="nav-logo" aria-hidden="true">
+              <img src="{% static 'img/zamena-pro-logo.png' %}" alt="" class="nav-logo__img">
+            </span>
+            <span class="nav-title">Замена.PRO</span>
+          </a>
+          <button
+            type="button"
+            id="sidebarToggle"
+            class="icon-btn nav-sidebar-toggle"
+            aria-label="Открыть меню"
+            aria-expanded="false"
+            aria-controls="appSidebar"
+          >☰</button>
         </div>
-      </header>
 
-      <div id="sidebarBackdrop" class="app-sidebar-backdrop"></div>
-      <aside id="appSidebar" class="app-sidebar" aria-label="Основное меню">
-        <div class="app-sidebar__header">
-          <span class="app-sidebar__title">Меню</span>
-          <button type="button" id="sidebarClose" class="icon-btn" aria-label="Закрыть меню">✕</button>
+        <div class="topbar-context">
+          <div class="topbar-context__label">Раздел</div>
+          <div class="topbar-context__title">{% block section_title %}Панель{% endblock %}</div>
         </div>
-        <nav class="app-sidebar__nav">
-          <a class="app-sidebar__link" href="{% url 'communications:cabinet' %}">Кабинет</a>
-          {% if user.is_superuser or user.can_calendar or user.is_guest or user.is_teacher %}
-            <a class="app-sidebar__link" href="/replacements/calendar/">Календарь</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_calendar or user.can_logs or user.is_guest or user.is_teacher %}
-            <a class="app-sidebar__link" href="/replacements/stats/">Статистика</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_calendar or user.can_calls or user.is_guest %}
-            <a class="app-sidebar__link" href="/replacements/cabinets/">Кабинеты</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_teachers %}
-            <a class="app-sidebar__link" href="/replacements/specializations/">Учителя</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_upload %}
-            <a class="app-sidebar__link" href="/upload/">Загрузка</a>
-            <a class="app-sidebar__link" href="/upload/schedule/">Расписание</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_logs %}
-            <a class="app-sidebar__link" href="/replacements/logs/">Логи</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_calls %}
-            <a class="app-sidebar__link" href="/schedule/">Звонки</a>
-          {% endif %}
-          {% if user.is_superuser or user.can_users %}
-            <a class="app-sidebar__link" href="{% url 'accounts:user_list' %}">Пользователи</a>
-          {% endif %}
+
+        <div class="nav-actions">
           {% if not user.is_guest %}
-            <a id="sidebarMsgLink" class="app-sidebar__link" href="{% url 'communications:chats' %}">
-              Сообщения
-              <span id="sidebarUnreadMessagesCount" class="alert-badge alert-badge--inline" hidden>0</span>
+            <a id="navMsgLink" class="nav-icon-link" href="{% url 'communications:chats' %}" title="Сообщения" aria-label="Сообщения">
+              ✉
+              <span id="navUnreadMessagesCount" class="alert-badge" hidden>0</span>
             </a>
           {% endif %}
           {% if user.is_superuser or user.is_admin %}
-            <a id="sidebarNotifLink" class="app-sidebar__link" href="{% url 'communications:notifications' %}">
-              Уведомления
-              <span id="sidebarUnreadNotificationsCount" class="alert-badge alert-badge--inline" hidden>0</span>
+            <a id="navNotifLink" class="nav-icon-link" href="{% url 'communications:notifications' %}" title="Уведомления" aria-label="Уведомления">
+              ⌁
+              <span id="navUnreadNotificationsCount" class="alert-badge" hidden>0</span>
             </a>
           {% endif %}
+
+          <div class="nav-user" title="Текущий пользователь">
+            <span class="nav-user__icon" data-fixed="1">{{ user|user_icon }}</span>
+            <span class="nav-user__name">{{ user.full_name|default:user.username }}</span>
+          </div>
+          <form method="post" action="{% url 'accounts:logout' %}" style="display:inline;">
+            {% csrf_token %}
+            <button class="btn btn--ghost btn--sm" type="submit">Выйти</button>
+          </form>
+        </div>
+      </div>
+    </header>
+
+    <div id="sidebarBackdrop" class="app-sidebar-backdrop"></div>
+    <aside id="appSidebar" class="app-sidebar" aria-label="Основное меню">
+      <div class="app-sidebar__header">
+        <span class="app-sidebar__title">Навигация</span>
+        <button type="button" id="sidebarClose" class="icon-btn" aria-label="Закрыть меню">✕</button>
+      </div>
+      <nav class="app-sidebar__nav">
+        <a class="app-sidebar__link" href="{% url 'communications:cabinet' %}">Кабинет</a>
+        {% if user.is_support_system %}
           <a class="app-sidebar__link" href="{% url 'communications:tickets' %}">Тикеты</a>
-        </nav>
-      </aside>
-    {% endif %}
-  {% endblock %}
+          <a class="app-sidebar__link" href="{% url 'communications:support_stats' %}">Статистика</a>
+        {% else %}
+        {% if user.is_superuser or user.can_calendar or user.is_guest or user.is_teacher %}
+          <a class="app-sidebar__link" href="/replacements/calendar/">Календарь</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_calendar or user.can_logs or user.is_guest or user.is_teacher %}
+          <a class="app-sidebar__link" href="/replacements/stats/">Статистика</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_calendar or user.can_calls or user.is_guest %}
+          <a class="app-sidebar__link" href="/replacements/cabinets/">Кабинеты</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_teachers %}
+          <a class="app-sidebar__link" href="/replacements/specializations/">Учителя</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_upload %}
+          <a class="app-sidebar__link" href="/upload/">Загрузка</a>
+          <a class="app-sidebar__link" href="/upload/schedule/">Расписание</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_logs %}
+          <a class="app-sidebar__link" href="/replacements/logs/">Логи</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_calls %}
+          <a class="app-sidebar__link" href="/schedule/">Звонки</a>
+        {% endif %}
+        {% if user.is_superuser or user.can_users %}
+          <a class="app-sidebar__link" href="{% url 'accounts:user_list' %}">Пользователи</a>
+        {% endif %}
+        {% if not user.is_guest %}
+          <a id="sidebarMsgLink" class="app-sidebar__link" href="{% url 'communications:chats' %}">
+            Сообщения
+            <span id="sidebarUnreadMessagesCount" class="alert-badge alert-badge--inline" hidden>0</span>
+          </a>
+        {% endif %}
+        {% if user.is_superuser or user.is_admin %}
+          <a id="sidebarNotifLink" class="app-sidebar__link" href="{% url 'communications:notifications' %}">
+            Уведомления
+            <span id="sidebarUnreadNotificationsCount" class="alert-badge alert-badge--inline" hidden>0</span>
+          </a>
+        {% endif %}
+        {% if user.is_superuser or user.is_admin or user.is_project_admin %}
+          <a class="app-sidebar__link" href="{% url 'communications:support_ticket_create' %}">Служба поддержки</a>
+        {% endif %}
+        <a class="app-sidebar__link" href="{% url 'communications:tickets' %}">Тикеты</a>
+        {% endif %}
+      </nav>
+    </aside>
+  {% endif %}
 
   <main class="container {% block container_class %}{% endblock %}" role="main">
+    {% block pre_content %}{% endblock %}
     {% block content %}{% endblock %}
   </main>
 
   <footer class="app-footer">
-    <div class="app-footer__inner">© {% now "Y" %} Все права защищены</div>
+    <div class="app-footer__inner">© {% now "Y" %} Замена.PRO</div>
   </footer>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-relevant="additions"></div>
@@ -131,7 +144,7 @@
     </div>
   {% endif %}
 
-  <script src="{% static 'js/ui.js' %}?v=2026-04-28-3"></script>
+  <script src="{% static 'js/ui.js' %}?v=2026-05-03-1"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>
